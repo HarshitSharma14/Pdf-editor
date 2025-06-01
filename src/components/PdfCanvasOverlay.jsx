@@ -3,7 +3,7 @@ import { useSelector, useDispatch } from 'react-redux';
 import { addOverlay, updateOverlay, removeOverlay, undo, redo } from '../store/overlaySlice';
 import { Rnd } from 'react-rnd';
 
-const PdfCanvasOverlay = ({ pageNumber, activeMode, pdfFile }) => {
+const PdfCanvasOverlay = ({ pageNumber, activeMode, pdfFile, onCanvasSizeChange }) => {
     const canvasRef = useRef(null);
     const blurCanvasRef = useRef(null);
     const dispatch = useDispatch();
@@ -44,6 +44,10 @@ const PdfCanvasOverlay = ({ pageNumber, activeMode, pdfFile }) => {
                 canvas.style.cursor = activeMode === 'addText' ? (addMode ? 'text' : 'pointer') : (activeMode ? 'crosshair' : 'default');
                 canvas.style.zIndex = 1;
                 blurCanvas.style.zIndex = 2;
+                // Notify parent of canvas size in pixels
+                if (onCanvasSizeChange) {
+                    onCanvasSizeChange({ width: pdfPage.width, height: pdfPage.height });
+                }
             }
         };
         observer = new MutationObserver(() => { updateCanvasSize(); });
@@ -56,7 +60,7 @@ const PdfCanvasOverlay = ({ pageNumber, activeMode, pdfFile }) => {
             if (observer) observer.disconnect();
             window.removeEventListener('resize', updateCanvasSize);
         };
-    }, [activeMode, pageNumber, pdfFile, addMode]);
+    }, [activeMode, pageNumber, pdfFile, addMode, onCanvasSizeChange]);
 
     // Draw overlays except addText (handled as overlays)
     useEffect(() => {

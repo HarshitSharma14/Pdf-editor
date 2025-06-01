@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { Document, Page, pdfjs } from 'react-pdf';
 import { Button, Container, Box, Typography } from '@mui/material';
+import { useSelector } from 'react-redux';
 
 // Import react-pdf CSS
 import 'react-pdf/dist/esm/Page/AnnotationLayer.css';
@@ -19,8 +20,14 @@ export default function Home() {
     const [pdfFile, setPdfFile] = useState(null);
     const [numPages, setNumPages] = useState(null);
     const [pageNumber, setPageNumber] = useState(1);
-    const [editActions, setEditActions] = useState([]);
     const [activeMode, setActiveMode] = useState('view');
+    const [renderedCanvasSize, setRenderedCanvasSize] = useState({ width: 800, height: 1000 }); // default
+
+    // Get overlays from Redux and flatten to a single array with pageNumber
+    const overlays = useSelector(state => state.overlay.overlays);
+    const editActions = Object.entries(overlays).flatMap(([page, actions]) =>
+        actions.map(action => ({ ...action, pageNumber: Number(page) }))
+    );
 
     const onDocumentLoadSuccess = ({ numPages }) => {
         setNumPages(numPages);
@@ -30,11 +37,6 @@ export default function Home() {
     const handleFileUpload = (file) => {
         setPdfFile(file);
         setPageNumber(1);
-        setEditActions([]); // Clear previous edit actions
-    };
-
-    const handleEditAction = (action) => {
-        setEditActions([...editActions, action]);
     };
 
     return (
@@ -45,11 +47,10 @@ export default function Home() {
                 </Typography>
                 <PdfUploader onFileUpload={handleFileUpload} />
                 <PdfEditorToolbar
-                    onEditAction={handleEditAction}
                     setActiveMode={setActiveMode}
                     activeMode={activeMode}
                 />
-                <SavePdfButton pdfFile={pdfFile} editActions={editActions} />
+                <SavePdfButton pdfFile={pdfFile} editActions={editActions} renderedCanvasSize={renderedCanvasSize} />
                 {pdfFile && (
                     <Box
                         position="relative"
@@ -68,9 +69,10 @@ export default function Home() {
                             <PdfCanvasOverlay
                                 editActions={editActions}
                                 pageNumber={pageNumber}
-                                onEditAction={handleEditAction}
+                                onEditAction={() => { }}
                                 activeMode={activeMode}
                                 pdfFile={pdfFile}
+                                onCanvasSizeChange={setRenderedCanvasSize}
                             />
                         </Box>
                     </Box>
