@@ -74,7 +74,7 @@ const PdfCanvasOverlay = ({ pageNumber, activeMode, pdfFile }) => {
     const handleCanvasClick = (e) => {
         if (!(activeMode === 'addText' && addMode)) return;
         const pos = getMousePosition(e);
-        setTextBox({ x: pos.x, y: pos.y, width: 120, height: 30, text: '' });
+        setTextBox({ x: pos.x, y: pos.y, width: 120, height: 50, text: '' });
         setShowTextBox(true);
         setAddMode(false);
         setEditingIndex(null);
@@ -104,16 +104,65 @@ const PdfCanvasOverlay = ({ pageNumber, activeMode, pdfFile }) => {
         setEditingIndex(null);
     };
 
+    // Auto-resize textarea based on content
+    const handleTextareaChange = (e, idx) => {
+        const textarea = e.target;
+        const text = e.target.value;
+
+        // If text contains newlines, expand vertically
+        if (text.includes('\n')) {
+            textarea.style.height = 'auto';
+            textarea.style.height = `${textarea.scrollHeight}px`;
+            const newHeight = Math.max(50, textarea.scrollHeight);
+            setTextBox(prev => ({
+                ...prev,
+                text: text,
+                height: newHeight
+            }));
+        } else {
+            // Otherwise, expand horizontally
+            const newWidth = Math.max(120, text.length * 8); // Approximate width based on character count
+            setTextBox(prev => ({
+                ...prev,
+                text: text,
+                width: newWidth
+            }));
+        }
+    };
+
     // Keyboard save for textarea
     const handleTextBoxKeyDown = (e, idx) => {
-        if (e.key === 'Enter') {
+        if (e.key === 'Enter' && !e.shiftKey) {
             e.preventDefault();
+            // When Enter is pressed, switch to vertical expansion
+            const textarea = e.target;
+            textarea.style.height = 'auto';
+            textarea.style.height = `${textarea.scrollHeight}px`;
+            const newHeight = Math.max(50, textarea.scrollHeight);
+            setTextBox(prev => ({
+                ...prev,
+                height: newHeight
+            }));
+
             if (editingIndex === null) {
                 handleTextBoxBlur();
             } else {
                 handleEditTextBoxBlur(idx);
             }
         }
+    };
+
+    // Save textbox with current height
+    const handleSaveTextBox = (idx) => {
+        if (textBox.text.trim() !== '') {
+            dispatch(updateOverlay({
+                pageNumber,
+                index: idx,
+                overlay: { ...textBox, type: 'addText' }
+            }));
+        }
+        setShowTextBox(false);
+        setEditingIndex(null);
     };
 
     // Mouse position helper
@@ -189,12 +238,12 @@ const PdfCanvasOverlay = ({ pageNumber, activeMode, pdfFile }) => {
     const handleEditTextBox = (idx) => {
         if (activeMode === 'addText') {
             setEditingIndex(idx);
-            setTextBox(overlays[idx]);
+            setTextBox({ ...overlays[idx], height: 50 });
             setShowTextBox(true);
         }
     };
 
-    // Rnd drag/resize handlers
+    // Rnd drag handler (no resize)
     const handleRndDragStop = (e, d, idx) => {
         dispatch(updateOverlay({
             pageNumber,
@@ -202,6 +251,8 @@ const PdfCanvasOverlay = ({ pageNumber, activeMode, pdfFile }) => {
             overlay: { ...overlays[idx], x: d.x, y: d.y }
         }));
     };
+
+    // Rnd resize handler
     const handleRndResizeStop = (e, direction, ref, delta, position, idx) => {
         dispatch(updateOverlay({
             pageNumber,
@@ -273,36 +324,73 @@ const PdfCanvasOverlay = ({ pageNumber, activeMode, pdfFile }) => {
                                 alignItems: 'center',
                                 pointerEvents: 'auto',
                             }}
-                            onDoubleClick={() => handleEditTextBox(idx)}
                         >
                             {editingIndex === idx && showTextBox ? (
-                                <textarea
-                                    style={{
-                                        width: '100%',
-                                        height: '100%',
-                                        border: 'none',
-                                        background: 'transparent',
-                                        resize: 'none',
-                                        outline: 'none',
-                                        fontSize: 16,
-                                        fontFamily: 'Arial',
-                                    }}
-                                    value={textBox.text}
-                                    autoFocus
-                                    onChange={e => setTextBox({ ...textBox, text: e.target.value })}
-                                    onBlur={() => handleEditTextBoxBlur(idx)}
-                                    onKeyDown={e => handleTextBoxKeyDown(e, idx)}
-                                    onMouseDown={e => e.stopPropagation()}
-                                />
+                                <div style={{ width: '100%', position: 'relative' }}>
+                                    <textarea
+                                        style={{
+                                            width: '100%',
+                                            minHeight: '50px',
+                                            border: 'none',
+                                            background: 'transparent',
+                                            resize: 'none',
+                                            outline: 'none',
+                                            fontSize: 16,
+                                            fontFamily: 'Arial',
+                                            padding: '4px 40px 4px 4px',
+                                            overflow: 'hidden',
+                                            whiteSpace: 'nowrap'
+                                        }}
+                                        value={textBox.text}
+                                        autoFocus
+                                        onChange={e => handleTextareaChange(e, idx)}
+                                        onKeyDown={e => handleTextBoxKeyDown(e, idx)}
+                                        onMouseDown={e => e.stopPropagation()}
+                                    />
+                                    <button
+                                        style={{
+                                            position: 'absolute',
+                                            top: 4,
+                                            right: 4,
+                                            zIndex: 11,
+                                            background: 'transparent',
+                                            border: 'none',
+                                            cursor: 'pointer',
+                                            color: '#28a745',
+                                            fontWeight: 'bold'
+                                        }}
+                                        onClick={() => handleSaveTextBox(idx)}
+                                        title="Save changes"
+                                    >
+                                        ✓
+                                    </button>
+                                </div>
                             ) : (
                                 <>
-                                    <span style={{ padding: 4, width: '100%', height: '100%', wordBreak: 'break-word', fontSize: 16, fontFamily: 'Arial' }}>{action.text}</span>
+                                    <span style={{
+                                        padding: '4px 40px 4px 4px',
+                                        width: '100%',
+                                        height: '100%',
+                                        wordBreak: 'break-word',
+                                        fontSize: 16,
+                                        fontFamily: 'Arial',
+                                        display: 'block',
+                                        minHeight: '50px',
+                                        whiteSpace: 'pre-wrap'
+                                    }}>{action.text}</span>
                                     <button
-                                        style={{ position: 'absolute', top: 0, right: 0, zIndex: 11, background: 'transparent', border: 'none', cursor: 'pointer', color: '#c00', fontWeight: 'bold' }}
+                                        style={{ position: 'absolute', top: 4, right: 4, zIndex: 11, background: 'transparent', border: 'none', cursor: 'pointer', color: '#c00', fontWeight: 'bold' }}
                                         onClick={() => handleDeleteTextBox(idx)}
                                         title="Delete textbox"
                                     >
                                         🗑️
+                                    </button>
+                                    <button
+                                        style={{ position: 'absolute', top: 4, right: 34, zIndex: 11, background: 'transparent', border: 'none', cursor: 'pointer', color: '#007bff', fontWeight: 'bold' }}
+                                        onClick={() => handleEditTextBox(idx)}
+                                        title="Edit textbox"
+                                    >
+                                        ✏️
                                     </button>
                                 </>
                             )}
@@ -337,10 +425,16 @@ const PdfCanvasOverlay = ({ pageNumber, activeMode, pdfFile }) => {
                 <Rnd
                     size={{ width: textBox.width, height: textBox.height }}
                     position={{ x: textBox.x, y: textBox.y }}
-                    enableResizing={activeMode === 'addText'}
+                    enableResizing={true}
                     disableDragging={activeMode !== 'addText'}
                     onDragStop={(e, d) => setTextBox({ ...textBox, x: d.x, y: d.y })}
-                    onResizeStop={(e, direction, ref, delta, position) => setTextBox({ ...textBox, width: parseInt(ref.style.width, 10), height: parseInt(ref.style.height, 10), x: position.x, y: position.y })}
+                    onResizeStop={(e, direction, ref, delta, position) => setTextBox({
+                        ...textBox,
+                        width: parseInt(ref.style.width, 10),
+                        height: parseInt(ref.style.height, 10),
+                        x: position.x,
+                        y: position.y
+                    })}
                     bounds="parent"
                     style={{
                         zIndex: 10,
@@ -351,24 +445,45 @@ const PdfCanvasOverlay = ({ pageNumber, activeMode, pdfFile }) => {
                         pointerEvents: activeMode === 'addText' ? 'auto' : 'none',
                     }}
                 >
-                    <textarea
-                        style={{
-                            width: '100%',
-                            height: '100%',
-                            border: 'none',
-                            background: 'transparent',
-                            resize: 'none',
-                            outline: 'none',
-                            fontSize: 16,
-                            fontFamily: 'Arial',
-                        }}
-                        value={textBox.text}
-                        autoFocus
-                        onChange={e => setTextBox({ ...textBox, text: e.target.value })}
-                        onBlur={handleTextBoxBlur}
-                        onKeyDown={e => handleTextBoxKeyDown(e, null)}
-                        onMouseDown={e => e.stopPropagation()}
-                    />
+                    <div style={{ width: '100%', position: 'relative' }}>
+                        <textarea
+                            style={{
+                                width: '100%',
+                                minHeight: '50px',
+                                border: 'none',
+                                background: 'transparent',
+                                resize: 'none',
+                                outline: 'none',
+                                fontSize: 16,
+                                fontFamily: 'Arial',
+                                padding: '4px 40px 4px 4px',
+                                overflow: 'hidden',
+                                whiteSpace: 'nowrap'
+                            }}
+                            value={textBox.text}
+                            autoFocus
+                            onChange={e => handleTextareaChange(e, null)}
+                            onKeyDown={e => handleTextBoxKeyDown(e, null)}
+                            onMouseDown={e => e.stopPropagation()}
+                        />
+                        <button
+                            style={{
+                                position: 'absolute',
+                                top: 4,
+                                right: 4,
+                                zIndex: 11,
+                                background: 'transparent',
+                                border: 'none',
+                                cursor: 'pointer',
+                                color: '#28a745',
+                                fontWeight: 'bold'
+                            }}
+                            onClick={handleTextBoxBlur}
+                            title="Save textbox"
+                        >
+                            ✓
+                        </button>
+                    </div>
                 </Rnd>
             )}
         </>
