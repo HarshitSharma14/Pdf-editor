@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { Container, Box, Typography, useTheme, useMediaQuery } from '@mui/material';
 import { useSelector } from 'react-redux';
-import { getOverlaysForExport } from '../store/overlaySlice';
+import { selectAllOverlaysForExport } from '../store/overlaySlice';
 
 // Import your existing components (now updated with responsive code)
 import PdfUploader from '../components/PdfUploader';
@@ -21,13 +21,8 @@ export default function Home() {
     const [activeMode, setActiveMode] = useState('view');
     const [pdfDimensions, setPdfDimensions] = useState(null);
 
-    // Get overlays for export (in original PDF coordinates)
-    const exportOverlays = useSelector(state => {
-        const allOverlays = Object.entries(state.overlay.overlays).flatMap(([page, actions]) =>
-            actions.map(action => ({ ...action, pageNumber: Number(page) }))
-        );
-        return allOverlays;
-    });
+    // Fixed: Use memoized selector to prevent unnecessary rerenders
+    const exportOverlays = useSelector(selectAllOverlaysForExport);
 
     const onDocumentLoadSuccess = (pdf) => {
         setNumPages(pdf.numPages);

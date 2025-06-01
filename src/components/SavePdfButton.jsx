@@ -60,9 +60,10 @@ const ResponsiveSavePdfButton = ({ pdfFile, editActions, pdfDimensions }) => {
     const [saving, setSaving] = React.useState(false);
 
     const handleSave = async () => {
-        if (!pdfFile || !editActions.length) return;
+        if (!pdfFile || !editActions || Object.keys(editActions).length === 0) return;
 
         setSaving(true);
+        console.log('Starting save process with overlays:', editActions);
 
         try {
             const arrayBuffer = await pdfFile.arrayBuffer();
@@ -72,11 +73,10 @@ const ResponsiveSavePdfButton = ({ pdfFile, editActions, pdfDimensions }) => {
 
             // Group overlays by page
             const overlaysByPage = {};
-            editActions.forEach(action => {
-                if (!overlaysByPage[action.pageNumber]) {
-                    overlaysByPage[action.pageNumber] = [];
+            Object.entries(editActions).forEach(([pageNum, actions]) => {
+                if (actions && actions.length > 0) {
+                    overlaysByPage[pageNum] = actions;
                 }
-                overlaysByPage[action.pageNumber].push(action);
             });
 
             const fontCache = {};
@@ -87,9 +87,55 @@ const ResponsiveSavePdfButton = ({ pdfFile, editActions, pdfDimensions }) => {
                 const page = pages[pageNumber - 1];
                 if (!page) continue;
 
+                console.log(`Processing page ${pageNumber} with ${actions.length} actions`);
+
                 const { width: pdfWidth, height: pdfHeight } = page.getSize();
 
-                // Handle blur overlays first (require canvas rendering)
+                // Process text overlays first
+                const textActions = actions.filter(a => a.type === 'addText');
+                console.log(`Found ${textActions.length} text actions on page ${pageNumber}`);
+
+                for (const action of textActions) {
+                    try {
+                        console.log('Processing text action:', action);
+
+                        // Get font
+                        const fontFamily = action.fontFamily || 'Roboto';
+                        const fontFileName = getFontFileName(fontFamily);
+                        const fontKey = fontFileName;
+
+                        if (!fontCache[fontKey]) {
+                            try {
+                                const fontBytes = await fetch(`/fonts/${fontFileName}`).then(res => res.arrayBuffer());
+                                fontCache[fontKey] = await pdfDoc.embedFont(fontBytes, { subset: true });
+                                console.log(`Successfully loaded font: ${fontFileName}`);
+                            } catch (e) {
+                                console.warn(`Font ${fontFileName} not found, using fallback`);
+                                fontCache[fontKey] = await getPDFFont(pdfDoc, fontFamily);
+                            }
+                        }
+
+                        let font = fontCache[fontKey];
+                        if (!font) {
+                            console.error('Failed to load font, using default');
+                            font = await pdfDoc.embedStandardFont('Helvetica');
+                        }
+
+                        // Draw text
+                        page.drawText(action.text, {
+                            x: action.x,
+                            y: pdfHeight - action.y - action.height,
+                            size: action.fontSize,
+                            font,
+                            color: rgb(0, 0, 0),
+                            opacity: 1
+                        });
+                    } catch (error) {
+                        console.error('Error processing text overlay:', error);
+                    }
+                }
+
+                // Handle blur overlays
                 const blurActions = actions.filter(a => a.type === 'blur');
                 if (blurActions.length > 0) {
                     try {
@@ -111,20 +157,14 @@ const ResponsiveSavePdfButton = ({ pdfFile, editActions, pdfDimensions }) => {
 
                         // Process each blur area
                         for (const blur of blurActions) {
-                            // Convert percentage coordinates to canvas coordinates
-                            const canvasX = blur.x * viewport.width;
-                            const canvasY = blur.y * viewport.height;
-                            const canvasW = blur.width * viewport.width;
-                            const canvasH = blur.height * viewport.height;
-
                             // Create blur effect
                             const blurCanvas = document.createElement('canvas');
-                            blurCanvas.width = canvasW;
-                            blurCanvas.height = canvasH;
+                            blurCanvas.width = blur.width;
+                            blurCanvas.height = blur.height;
                             const blurCtx = blurCanvas.getContext('2d');
 
                             // Extract area to blur
-                            blurCtx.drawImage(canvas, canvasX, canvasY, canvasW, canvasH, 0, 0, canvasW, canvasH);
+                            blurCtx.drawImage(canvas, blur.x, blur.y, blur.width, blur.height, 0, 0, blur.width, blur.height);
 
                             // Apply blur
                             blurCtx.filter = 'blur(12px)';
@@ -135,18 +175,12 @@ const ResponsiveSavePdfButton = ({ pdfFile, editActions, pdfDimensions }) => {
                             const imgBytes = await fetch(imgDataUrl).then(res => res.arrayBuffer());
                             const img = await pdfDoc.embedPng(imgBytes);
 
-                            // Convert percentage coordinates to PDF coordinates
-                            const pdfX = blur.x * pdfWidth;
-                            const pdfY = blur.y * pdfHeight;
-                            const pdfW = blur.width * pdfWidth;
-                            const pdfH = blur.height * pdfHeight;
-
-                            // Draw blurred image on PDF (note: PDF coordinates are bottom-up)
+                            // Draw blurred image on PDF
                             page.drawImage(img, {
-                                x: pdfX,
-                                y: pdfHeight - pdfY - pdfH,
-                                width: pdfW,
-                                height: pdfH,
+                                x: blur.x,
+                                y: pdfHeight - blur.y - blur.height,
+                                width: blur.width,
+                                height: blur.height,
                             });
                         }
                     } catch (error) {
@@ -154,84 +188,15 @@ const ResponsiveSavePdfButton = ({ pdfFile, editActions, pdfDimensions }) => {
                     }
                 }
 
-                // Process erase and text overlays
+                // Process erase overlays
                 for (const action of actions) {
                     if (action.type === 'erase') {
-                        // Convert percentage coordinates to PDF coordinates
-                        const pdfX = action.x * pdfWidth;
-                        const pdfY = action.y * pdfHeight;
-                        const pdfW = action.width * pdfWidth;
-                        const pdfH = action.height * pdfHeight;
-
                         page.drawRectangle({
-                            x: pdfX,
-                            y: pdfHeight - pdfY - pdfH, // PDF coordinates are bottom-up
-                            width: pdfW,
-                            height: pdfH,
+                            x: action.x,
+                            y: pdfHeight - action.y - action.height,
+                            width: action.width,
+                            height: action.height,
                             color: rgb(1, 1, 1), // White color for erase
-                        });
-                    } else if (action.type === 'addText') {
-                        // Handle text overlay
-                        const pdfX = action.x * pdfWidth;
-                        const pdfY = action.y * pdfHeight;
-                        const pdfW = action.width * pdfWidth;
-                        const pdfH = action.height * pdfHeight;
-
-                        // Calculate responsive font size
-                        let fontSize;
-                        if (action.fontSizePercentage) {
-                            fontSize = action.fontSizePercentage * pdfHeight;
-                        } else {
-                            fontSize = (action.fontSize || 16) * (pdfHeight / 842); // Normalize to A4 height
-                        }
-                        fontSize = Math.max(8, Math.min(fontSize, 72)); // Clamp between 8 and 72pt
-
-                        // Get font
-                        const fontFamily = action.fontFamily || 'Roboto';
-                        const fontWeight = action.fontWeight || 'Regular';
-                        const fontStyle = action.fontStyle || 'normal';
-                        const fontFileName = getFontFileName(fontFamily, fontWeight, fontStyle);
-                        const fontKey = fontFileName;
-
-                        if (!fontCache[fontKey]) {
-                            try {
-                                const fontBytes = await fetch(`/fonts/${fontFileName}`).then(res => res.arrayBuffer());
-                                fontCache[fontKey] = await pdfDoc.embedFont(fontBytes);
-                            } catch (e) {
-                                // Fallback to standard fonts
-                                console.warn(`Font ${fontFileName} not found, using fallback`);
-                                fontCache[fontKey] = await getPDFFont(pdfDoc, fontFamily, fontWeight);
-                            }
-                        }
-
-                        const font = fontCache[fontKey];
-
-                        // Calculate text positioning
-                        let ascent, lineHeight, startY;
-                        try {
-                            ascent = font.ascentAtSize ? font.ascentAtSize(fontSize) : fontSize * 0.8;
-                            lineHeight = font.heightAtSize ? font.heightAtSize(fontSize) : fontSize * 1.2;
-                        } catch (e) {
-                            ascent = fontSize * 0.8;
-                            lineHeight = fontSize * 1.2;
-                        }
-
-                        startY = pdfHeight - pdfY - ascent;
-
-                        // Word wrap text to fit within the text box
-                        const wrappedLines = wrapTextToWidth(action.text || '', font, fontSize, pdfW);
-
-                        // Draw each line
-                        wrappedLines.forEach((line, i) => {
-                            if (line.trim()) {
-                                page.drawText(line, {
-                                    x: pdfX,
-                                    y: startY - (i * lineHeight),
-                                    size: fontSize,
-                                    font,
-                                    color: rgb(0, 0, 0),
-                                });
-                            }
                         });
                     }
                 }

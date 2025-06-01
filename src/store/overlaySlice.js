@@ -183,6 +183,34 @@ export const getOverlaysForExport = (state, pageNumber) => {
     }));
 };
 
+// Selector for getting all overlays for export across all pages
+export const selectAllOverlaysForExport = (state) => {
+    const allOverlays = {};
+    Object.keys(state.overlay.overlays).forEach(pageNumber => {
+        const pageOverlays = state.overlay.overlays[pageNumber] || [];
+        const pdfDimensions = state.overlay.pdfDimensions[pageNumber];
+
+        if (pdfDimensions) {
+            allOverlays[pageNumber] = pageOverlays.map(overlay => ({
+                ...overlay,
+                x: percentageToPixels(overlay.x, pdfDimensions.originalWidth),
+                y: percentageToPixels(overlay.y, pdfDimensions.originalHeight),
+                width: percentageToPixels(overlay.width, pdfDimensions.originalWidth),
+                height: percentageToPixels(overlay.height, pdfDimensions.originalHeight),
+                fontSize: overlay.fontSizePercentage
+                    ? percentageToPixels(overlay.fontSizePercentage, pdfDimensions.originalHeight)
+                    : overlay.fontSize || 16,
+                text: overlay.text || '', // Ensure text is included
+                type: overlay.type, // Ensure type is included
+                fontFamily: overlay.fontFamily || 'Roboto',
+                fontWeight: overlay.fontWeight || 'Regular',
+                fontStyle: overlay.fontStyle || 'normal'
+            }));
+        }
+    });
+    return allOverlays;
+};
+
 export const {
     setOverlays,
     addOverlay,

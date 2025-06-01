@@ -24,7 +24,16 @@ const ResponsivePdfCanvasOverlay = ({ pageNumber, activeMode, pdfFile, pdfDimens
     const [isDrawing, setIsDrawing] = useState(false);
     const [startPos, setStartPos] = useState({ x: 0, y: 0, currentX: 0, currentY: 0 });
     const [showTextBox, setShowTextBox] = useState(false);
-    const [textBox, setTextBox] = useState({ x: 0, y: 0, width: 120, height: 30, text: '' });
+    const [textBox, setTextBox] = useState({
+        x: 0,
+        y: 0,
+        width: 200,
+        height: 40,
+        text: '',
+        fontSize: 16,
+        fontFamily: 'Roboto',
+        color: '#000000'
+    });
     const [editingIndex, setEditingIndex] = useState(null);
     const [canvasReady, setCanvasReady] = useState(false);
 
@@ -312,23 +321,35 @@ const ResponsivePdfCanvasOverlay = ({ pageNumber, activeMode, pdfFile, pdfDimens
         }));
     };
 
+    // FIXED: Simplified Add Text Button Handler
     const handleAddTextButton = () => {
-        // Create text box immediately at a default position with placeholder
-        const defaultTextBox = {
-            x: 150, // Centered position
-            y: 150,
-            width: 250,
-            height: 60,
-            text: 'Type your text here...',
+        const container = containerRef.current;
+        if (!container) return;
+
+        const containerRect = container.getBoundingClientRect();
+        const centerX = containerRect.width / 2 - 100;
+        const centerY = containerRect.height / 2 - 20;
+
+        setTextBox({
+            x: centerX,
+            y: centerY,
+            width: 200,
+            height: 40,
+            text: '',
             fontSize: 16,
             fontFamily: 'Roboto',
-            fontWeight: 'Regular',
-            fontStyle: 'normal'
-        };
-
-        setTextBox(defaultTextBox);
+            color: '#000000'
+        });
         setShowTextBox(true);
         setEditingIndex(null);
+
+        // Focus the textarea
+        setTimeout(() => {
+            const textarea = document.querySelector('textarea');
+            if (textarea) {
+                textarea.focus();
+            }
+        }, 100);
     };
 
     const handleEditTextBox = (idx) => {
@@ -343,17 +364,55 @@ const ResponsivePdfCanvasOverlay = ({ pageNumber, activeMode, pdfFile, pdfDimens
         dispatch(removeOverlay({ pageNumber, index: idx }));
     };
 
+    // FIXED: Simplified Text Box Save Handler
     const handleTextBoxSave = useCallback(() => {
-        // Don't save if text is empty or still placeholder text
-        if (textBox.text.trim() && textBox.text !== 'Type your text here...' && pdfDimensions) {
+        if (!textBox.text.trim() || !pdfDimensions) {
+            setShowTextBox(false);
+            return;
+        }
+
+        const overlay = {
+            ...textBox,
+            type: 'addText',
+            // Store position and dimensions in PDF coordinates
+            x: textBox.x,
+            y: textBox.y,
+            width: textBox.width,
+            height: textBox.height,
+            text: textBox.text,
+            fontSize: textBox.fontSize,
+            fontFamily: textBox.fontFamily,
+            color: textBox.color
+        };
+
+        if (editingIndex !== null) {
+            dispatch(updateOverlay({
+                pageNumber,
+                index: editingIndex,
+                overlay,
+                pdfDimensions
+            }));
+        } else {
             dispatch(addOverlay({
                 pageNumber,
-                overlay: { ...textBox, type: 'addText' },
+                overlay,
                 pdfDimensions
             }));
         }
+
         setShowTextBox(false);
-    }, [textBox, pageNumber, pdfDimensions, dispatch]);
+        setTextBox({
+            x: 0,
+            y: 0,
+            width: 200,
+            height: 40,
+            text: '',
+            fontSize: 16,
+            fontFamily: 'Roboto',
+            color: '#000000'
+        });
+        setEditingIndex(null);
+    }, [textBox, pageNumber, pdfDimensions, dispatch, editingIndex]);
 
     const handleUpdateTextBox = useCallback((idx) => {
         if (textBox.text.trim() && textBox.text !== 'Type your text here...' && pdfDimensions) {
@@ -368,35 +427,153 @@ const ResponsivePdfCanvasOverlay = ({ pageNumber, activeMode, pdfFile, pdfDimens
         setEditingIndex(null);
     }, [textBox, pageNumber, pdfDimensions, dispatch]);
 
-    const handleRndDragStop = (e, d, idx) => {
-        if (!pdfDimensions) return;
-
-        const updatedOverlay = { ...overlaysPixels[idx], x: d.x, y: d.y };
-        dispatch(updateOverlay({
-            pageNumber,
-            index: idx,
-            overlay: updatedOverlay,
-            pdfDimensions
-        }));
+    // Enhanced keyboard handler
+    const handleTextareaKeyDown = (e) => {
+        if (e.key === 'Enter' && !e.shiftKey) {
+            e.preventDefault();
+            handleTextBoxSave();
+        } else if (e.key === 'Escape') {
+            setShowTextBox(false);
+        }
     };
 
-    const handleRndResizeStop = (e, direction, ref, delta, position, idx) => {
-        if (!pdfDimensions) return;
+    // Render text overlays
+    const renderTextOverlays = () => {
+        return overlaysPixels.map((action, idx) => {
+            if (action.type !== 'addText') return null;
 
-        const updatedOverlay = {
-            ...overlaysPixels[idx],
-            width: parseInt(ref.style.width, 10),
-            height: parseInt(ref.style.height, 10),
-            x: position.x,
-            y: position.y
-        };
-
-        dispatch(updateOverlay({
-            pageNumber,
-            index: idx,
-            overlay: updatedOverlay,
-            pdfDimensions
-        }));
+            return (
+                <Rnd
+                    key={idx}
+                    size={{ width: action.width, height: action.height }}
+                    position={{ x: action.x, y: action.y }}
+                    enableResizing={editingIndex !== idx}
+                    disableDragging={false}
+                    onDragStop={(e, d) => {
+                        dispatch(updateOverlay({
+                            pageNumber,
+                            index: idx,
+                            overlay: { ...action, x: d.x, y: d.y },
+                            pdfDimensions
+                        }));
+                    }}
+                    onResizeStop={(e, direction, ref, delta, position) => {
+                        dispatch(updateOverlay({
+                            pageNumber,
+                            index: idx,
+                            overlay: {
+                                ...action,
+                                x: position.x,
+                                y: position.y,
+                                width: parseInt(ref.style.width),
+                                height: parseInt(ref.style.height)
+                            },
+                            pdfDimensions
+                        }));
+                    }}
+                    bounds="parent"
+                    style={{
+                        zIndex: 1000,
+                        background: 'transparent',
+                        border: editingIndex === idx ? '2px solid #4CAF50' : 'none',
+                        display: 'flex',
+                        alignItems: 'center',
+                        pointerEvents: 'auto',
+                    }}
+                >
+                    {editingIndex === idx ? (
+                        <div style={{ width: '100%', height: '100%', position: 'relative' }}>
+                            <textarea
+                                value={textBox.text}
+                                onChange={(e) => setTextBox({ ...textBox, text: e.target.value })}
+                                onKeyDown={handleTextareaKeyDown}
+                                style={{
+                                    width: '100%',
+                                    height: '100%',
+                                    padding: '4px',
+                                    border: 'none',
+                                    resize: 'none',
+                                    fontSize: `${action.fontSize}px`,
+                                    fontFamily: action.fontFamily,
+                                    color: action.color,
+                                    background: 'transparent',
+                                    outline: 'none'
+                                }}
+                            />
+                            <button
+                                style={{
+                                    position: 'absolute',
+                                    top: 4,
+                                    right: 4,
+                                    background: '#4CAF50',
+                                    color: 'white',
+                                    border: 'none',
+                                    borderRadius: '4px',
+                                    cursor: 'pointer',
+                                    fontSize: '12px',
+                                    padding: '4px 8px'
+                                }}
+                                onClick={() => handleUpdateTextBox(idx)}
+                            >
+                                ✓
+                            </button>
+                        </div>
+                    ) : (
+                        <>
+                            <span style={{
+                                width: '100%',
+                                fontSize: `${action.fontSize}px`,
+                                fontFamily: action.fontFamily,
+                                color: action.color,
+                                whiteSpace: 'pre-wrap',
+                                wordBreak: 'break-word',
+                                padding: '4px'
+                            }}>
+                                {action.text}
+                            </span>
+                            {activeMode === 'addText' && (
+                                <>
+                                    <button
+                                        style={{
+                                            position: 'absolute',
+                                            top: 4,
+                                            right: 4,
+                                            background: '#f44336',
+                                            color: 'white',
+                                            border: 'none',
+                                            borderRadius: '3px',
+                                            cursor: 'pointer',
+                                            fontSize: '10px',
+                                            padding: '2px 4px'
+                                        }}
+                                        onClick={() => handleDeleteTextBox(idx)}
+                                    >
+                                        ✕
+                                    </button>
+                                    <button
+                                        style={{
+                                            position: 'absolute',
+                                            top: 4,
+                                            right: 24,
+                                            background: '#2196F3',
+                                            color: 'white',
+                                            border: 'none',
+                                            borderRadius: '3px',
+                                            cursor: 'pointer',
+                                            fontSize: '10px',
+                                            padding: '2px 4px'
+                                        }}
+                                        onClick={() => handleEditTextBox(idx)}
+                                    >
+                                        ✏
+                                    </button>
+                                </>
+                            )}
+                        </>
+                    )}
+                </Rnd>
+            );
+        });
     };
 
     return (
@@ -411,71 +588,77 @@ const ResponsivePdfCanvasOverlay = ({ pageNumber, activeMode, pdfFile, pdfDimens
                 pointerEvents: activeMode === 'view' ? 'none' : 'auto'
             }}
         >
-            {/* Clean toolbar - no more debug needed */}
-            <div style={{
-                position: 'absolute',
-                top: -50,
-                left: 0,
-                zIndex: 20,
-                display: 'flex',
-                gap: '8px',
-                flexWrap: 'wrap'
-            }}>
-                {activeMode === 'addText' && (
+            {/* Floating toolbar */}
+            {activeMode === 'addText' && (
+                <div style={{
+                    position: 'absolute',
+                    top: -50,
+                    left: 0,
+                    zIndex: 1000,
+                    display: 'flex',
+                    gap: '8px',
+                    background: 'white',
+                    padding: '8px',
+                    borderRadius: '8px',
+                    boxShadow: '0 2px 8px rgba(0,0,0,0.1)'
+                }}>
                     <button
                         onClick={handleAddTextButton}
                         style={{
-                            background: '#2196F3',
+                            background: '#4CAF50',
                             color: 'white',
                             border: 'none',
                             padding: '8px 16px',
-                            borderRadius: '6px',
+                            borderRadius: '4px',
                             cursor: 'pointer',
-                            fontSize: '12px',
-                            fontWeight: '500',
-                            boxShadow: '0 2px 4px rgba(0,0,0,0.1)',
-                            transition: 'all 0.2s ease'
+                            fontSize: '14px',
+                            fontWeight: '500'
                         }}
                     >
-                        ➕ Add Text Box
+                        Add Text
                     </button>
-                )}
+                    <select
+                        value={textBox.fontSize}
+                        onChange={(e) => setTextBox({ ...textBox, fontSize: Number(e.target.value) })}
+                        style={{
+                            padding: '4px',
+                            borderRadius: '4px',
+                            border: '1px solid #ddd'
+                        }}
+                    >
+                        {[12, 14, 16, 18, 20, 24, 28, 32].map(size => (
+                            <option key={size} value={size}>{size}px</option>
+                        ))}
+                    </select>
+                    <select
+                        value={textBox.fontFamily}
+                        onChange={(e) => setTextBox({ ...textBox, fontFamily: e.target.value })}
+                        style={{
+                            padding: '4px',
+                            borderRadius: '4px',
+                            border: '1px solid #ddd'
+                        }}
+                    >
+                        {FONT_FAMILIES.map(font => (
+                            <option key={font} value={font}>{font}</option>
+                        ))}
+                    </select>
+                    <input
+                        type="color"
+                        value={textBox.color}
+                        onChange={(e) => setTextBox({ ...textBox, color: e.target.value })}
+                        style={{
+                            width: '32px',
+                            height: '32px',
+                            padding: '0',
+                            border: '1px solid #ddd',
+                            borderRadius: '4px'
+                        }}
+                    />
+                </div>
+            )}
 
-                <button
-                    onClick={() => dispatch(undo())}
-                    style={{
-                        background: '#6c757d',
-                        color: 'white',
-                        border: 'none',
-                        padding: '6px 12px',
-                        borderRadius: '6px',
-                        cursor: 'pointer',
-                        fontSize: '12px',
-                        fontWeight: '500',
-                        boxShadow: '0 2px 4px rgba(0,0,0,0.1)'
-                    }}
-                >
-                    ↶ Undo
-                </button>
-                <button
-                    onClick={() => dispatch(redo())}
-                    style={{
-                        background: '#6c757d',
-                        color: 'white',
-                        border: 'none',
-                        padding: '6px 12px',
-                        borderRadius: '6px',
-                        cursor: 'pointer',
-                        fontSize: '12px',
-                        fontWeight: '500',
-                        boxShadow: '0 2px 4px rgba(0,0,0,0.1)'
-                    }}
-                >
-                    ↷ Redo
-                </button>
-            </div>
-
-            {/* Canvas layers with improved event handling */}
+            {/* Canvas layers */}
             <canvas ref={blurCanvasRef} style={{ cursor: 'default', pointerEvents: 'none' }} />
             <canvas
                 ref={canvasRef}
@@ -489,251 +672,66 @@ const ResponsivePdfCanvasOverlay = ({ pageNumber, activeMode, pdfFile, pdfDimens
                 }}
             />
 
-            {/* Text overlays */}
-            {overlaysPixels.map((action, idx) => (
-                action.type === 'addText' && (
-                    <div key={idx}>
-                        {activeMode === 'addText' ? (
-                            <Rnd
-                                size={{ width: action.width, height: action.height }}
-                                position={{ x: action.x, y: action.y }}
-                                enableResizing={editingIndex !== idx}
-                                disableDragging={false}
-                                onDragStop={(e, d) => handleRndDragStop(e, d, idx)}
-                                onResizeStop={(e, direction, ref, delta, position) =>
-                                    handleRndResizeStop(e, direction, ref, delta, position, idx)
-                                }
-                                bounds="parent"
-                                style={{
-                                    zIndex: 15,
-                                    background: 'rgba(255,255,255,0.9)',
-                                    border: '2px solid #2196F3',
-                                    borderRadius: '4px',
-                                    boxShadow: '0 2px 8px rgba(0,0,0,0.15)',
-                                    display: 'flex',
-                                    alignItems: 'center',
-                                    pointerEvents: 'auto',
-                                }}
-                            >
-                                {editingIndex === idx ? (
-                                    <div style={{ width: '100%', position: 'relative', padding: '4px' }}>
-                                        <div style={{ display: 'flex', gap: 4, marginBottom: 4, flexWrap: 'wrap' }}>
-                                            <select
-                                                value={textBox.fontFamily || 'Roboto'}
-                                                onChange={e => setTextBox(prev => ({ ...prev, fontFamily: e.target.value }))}
-                                                style={{ fontSize: '10px', padding: '2px' }}
-                                            >
-                                                {FONT_FAMILIES.map(f => <option key={f} value={f}>{f}</option>)}
-                                            </select>
-                                            <select
-                                                value={textBox.fontSize || 16}
-                                                onChange={e => setTextBox(prev => ({ ...prev, fontSize: Number(e.target.value) }))}
-                                                style={{ fontSize: '10px', padding: '2px' }}
-                                            >
-                                                {FONT_SIZES.map(s => <option key={s} value={s}>{s}px</option>)}
-                                            </select>
-                                        </div>
-                                        <textarea
-                                            style={{
-                                                width: '100%',
-                                                minHeight: '30px',
-                                                border: 'none',
-                                                background: 'transparent',
-                                                resize: 'none',
-                                                outline: 'none',
-                                                fontSize: textBox.fontSize || 16,
-                                                fontFamily: textBox.fontFamily || 'Roboto',
-                                                padding: '2px',
-                                            }}
-                                            value={textBox.text}
-                                            autoFocus
-                                            onChange={handleTextareaChange}
-                                            onKeyDown={e => {
-                                                if (e.key === 'Enter' && !e.shiftKey) {
-                                                    e.preventDefault();
-                                                    handleUpdateTextBox(idx);
-                                                }
-                                            }}
-                                        />
-                                        <button
-                                            style={{
-                                                position: 'absolute',
-                                                top: 2,
-                                                right: 2,
-                                                background: '#4CAF50',
-                                                color: 'white',
-                                                border: 'none',
-                                                borderRadius: '3px',
-                                                cursor: 'pointer',
-                                                fontSize: '12px',
-                                                padding: '2px 4px'
-                                            }}
-                                            onClick={() => handleUpdateTextBox(idx)}
-                                        >
-                                            ✓
-                                        </button>
-                                    </div>
-                                ) : (
-                                    <>
-                                        <span style={{
-                                            padding: '4px 30px 4px 4px',
-                                            width: '100%',
-                                            fontSize: action.fontSize || 16,
-                                            fontFamily: action.fontFamily || 'Roboto',
-                                            whiteSpace: 'pre-wrap',
-                                            wordBreak: 'break-word'
-                                        }}>
-                                            {action.text}
-                                        </span>
-                                        <button
-                                            style={{
-                                                position: 'absolute',
-                                                top: 2,
-                                                right: 2,
-                                                background: '#f44336',
-                                                color: 'white',
-                                                border: 'none',
-                                                borderRadius: '3px',
-                                                cursor: 'pointer',
-                                                fontSize: '10px',
-                                                padding: '1px 3px'
-                                            }}
-                                            onClick={() => handleDeleteTextBox(idx)}
-                                        >
-                                            ✕
-                                        </button>
-                                        <button
-                                            style={{
-                                                position: 'absolute',
-                                                top: 2,
-                                                right: 22,
-                                                background: '#2196F3',
-                                                color: 'white',
-                                                border: 'none',
-                                                borderRadius: '3px',
-                                                cursor: 'pointer',
-                                                fontSize: '10px',
-                                                padding: '1px 3px'
-                                            }}
-                                            onClick={() => handleEditTextBox(idx)}
-                                        >
-                                            ✏
-                                        </button>
-                                    </>
-                                )}
-                            </Rnd>
-                        ) : (
-                            <div
-                                style={{
-                                    position: 'absolute',
-                                    top: action.y,
-                                    left: action.x,
-                                    width: action.width,
-                                    height: action.height,
-                                    fontSize: action.fontSize || 16,
-                                    fontFamily: action.fontFamily || 'Roboto',
-                                    color: '#000',
-                                    pointerEvents: 'none',
-                                    whiteSpace: 'pre-wrap',
-                                    wordBreak: 'break-word',
-                                    zIndex: 12,
-                                    padding: '2px'
-                                }}
-                            >
-                                {action.text}
-                            </div>
-                        )}
-                    </div>
-                )
-            ))}
+            {/* Render text overlays */}
+            {renderTextOverlays()}
 
-            {/* New text box - improved with better defaults */}
-            {showTextBox && editingIndex === null && (
+            {/* Active text box */}
+            {showTextBox && (
                 <Rnd
                     size={{ width: textBox.width, height: textBox.height }}
                     position={{ x: textBox.x, y: textBox.y }}
-                    enableResizing={true}
-                    onDragStop={(e, d) => setTextBox(prev => ({ ...prev, x: d.x, y: d.y }))}
-                    onResizeStop={(e, direction, ref, delta, position) =>
-                        setTextBox(prev => ({
-                            ...prev,
-                            width: parseInt(ref.style.width, 10),
-                            height: parseInt(ref.style.height, 10),
+                    onDragStop={(e, d) => setTextBox({ ...textBox, x: d.x, y: d.y })}
+                    onResizeStop={(e, direction, ref, delta, position) => {
+                        setTextBox({
+                            ...textBox,
                             x: position.x,
-                            y: position.y
-                        }))
-                    }
+                            y: position.y,
+                            width: parseInt(ref.style.width),
+                            height: parseInt(ref.style.height)
+                        });
+                    }}
                     bounds="parent"
                     style={{
-                        zIndex: 15,
-                        background: 'rgba(255,255,255,0.98)',
-                        border: '3px solid #4CAF50',
-                        borderRadius: '8px',
-                        boxShadow: '0 4px 16px rgba(0,0,0,0.2)',
-                        pointerEvents: 'auto',
+                        zIndex: 1000,
+                        background: 'white',
+                        border: '2px solid #4CAF50',
+                        borderRadius: '4px',
+                        boxShadow: '0 2px 8px rgba(0,0,0,0.1)',
+                        display: 'flex',
+                        alignItems: 'center',
+                        pointerEvents: 'auto'
                     }}
                 >
-                    <div style={{ width: '100%', position: 'relative', padding: '8px' }}>
-                        <div style={{ display: 'flex', gap: 6, marginBottom: 6, flexWrap: 'wrap' }}>
-                            <select
-                                value={textBox.fontFamily || 'Roboto'}
-                                onChange={e => setTextBox(prev => ({ ...prev, fontFamily: e.target.value }))}
-                                style={{ fontSize: '11px', padding: '4px', borderRadius: '4px' }}
-                            >
-                                {FONT_FAMILIES.map(f => <option key={f} value={f}>{f}</option>)}
-                            </select>
-                            <select
-                                value={textBox.fontSize || 16}
-                                onChange={e => setTextBox(prev => ({ ...prev, fontSize: Number(e.target.value) }))}
-                                style={{ fontSize: '11px', padding: '4px', borderRadius: '4px' }}
-                            >
-                                {FONT_SIZES.map(s => <option key={s} value={s}>{s}px</option>)}
-                            </select>
-                        </div>
+                    <div style={{ width: '100%', height: '100%', position: 'relative' }}>
                         <textarea
+                            value={textBox.text}
+                            onChange={(e) => setTextBox({ ...textBox, text: e.target.value })}
+                            onKeyDown={handleTextareaKeyDown}
                             style={{
                                 width: '100%',
-                                minHeight: '40px',
-                                border: '1px solid #ddd',
-                                borderRadius: '4px',
-                                background: 'white',
+                                height: '100%',
+                                padding: '4px',
+                                border: 'none',
                                 resize: 'none',
+                                fontSize: `${textBox.fontSize}px`,
+                                fontFamily: textBox.fontFamily,
+                                color: textBox.color,
                                 outline: 'none',
-                                fontSize: textBox.fontSize || 16,
-                                fontFamily: textBox.fontFamily || 'Roboto',
-                                padding: '8px',
-                                color: textBox.text === 'Type your text here...' ? '#999' : '#000'
+                                background: 'transparent'
                             }}
-                            value={textBox.text}
-                            autoFocus
-                            onChange={handleTextareaChange}
-                            onFocus={e => {
-                                // Clear placeholder text when focused
-                                if (e.target.value === 'Type your text here...') {
-                                    setTextBox(prev => ({ ...prev, text: '' }));
-                                }
-                            }}
-                            onKeyDown={e => {
-                                if (e.key === 'Enter' && !e.shiftKey) {
-                                    e.preventDefault();
-                                    handleTextBoxSave();
-                                }
-                            }}
-                            placeholder="Type your text here..."
                         />
                         <button
                             style={{
                                 position: 'absolute',
-                                top: 8,
-                                right: 8,
+                                top: 4,
+                                right: 4,
                                 background: '#4CAF50',
                                 color: 'white',
                                 border: 'none',
                                 borderRadius: '4px',
                                 cursor: 'pointer',
-                                fontSize: '14px',
-                                padding: '4px 8px',
-                                fontWeight: 'bold'
+                                fontSize: '12px',
+                                padding: '4px 8px'
                             }}
                             onClick={handleTextBoxSave}
                         >
