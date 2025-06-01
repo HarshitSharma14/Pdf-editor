@@ -92,16 +92,12 @@ const PdfCanvasOverlay = ({ pageNumber, activeMode, pdfFile }) => {
     };
 
     // Add Text: Edit existing textbox
-    const handleEditTextBoxBlur = (idx) => {
-        if (textBox.text.trim() !== '') {
-            dispatch(updateOverlay({
-                pageNumber,
-                index: idx,
-                overlay: { ...textBox, type: 'addText' }
-            }));
+    const handleEditTextBox = (idx) => {
+        if (activeMode === 'addText') {
+            setEditingIndex(idx);
+            setTextBox(overlays[idx]);
+            setShowTextBox(true);
         }
-        setShowTextBox(false);
-        setEditingIndex(null);
     };
 
     // Auto-resize textarea based on content
@@ -147,7 +143,7 @@ const PdfCanvasOverlay = ({ pageNumber, activeMode, pdfFile }) => {
             if (editingIndex === null) {
                 handleTextBoxBlur();
             } else {
-                handleEditTextBoxBlur(idx);
+                handleEditTextBox(idx);
             }
         }
     };
@@ -234,37 +230,42 @@ const PdfCanvasOverlay = ({ pageNumber, activeMode, pdfFile }) => {
         setEditingIndex(null);
     };
 
-    // Add Text: Edit existing textbox
-    const handleEditTextBox = (idx) => {
-        if (activeMode === 'addText') {
-            setEditingIndex(idx);
-            setTextBox({ ...overlays[idx], height: 50 });
-            setShowTextBox(true);
-        }
-    };
-
-    // Rnd drag handler (no resize)
+    // Rnd drag handler
     const handleRndDragStop = (e, d, idx) => {
-        dispatch(updateOverlay({
-            pageNumber,
-            index: idx,
-            overlay: { ...overlays[idx], x: d.x, y: d.y }
-        }));
+        if (editingIndex === idx) {
+            setTextBox(prev => ({ ...prev, x: d.x, y: d.y }));
+        } else {
+            dispatch(updateOverlay({
+                pageNumber,
+                index: idx,
+                overlay: { ...overlays[idx], x: d.x, y: d.y }
+            }));
+        }
     };
 
     // Rnd resize handler
     const handleRndResizeStop = (e, direction, ref, delta, position, idx) => {
-        dispatch(updateOverlay({
-            pageNumber,
-            index: idx,
-            overlay: {
-                ...overlays[idx],
+        if (editingIndex === idx) {
+            setTextBox(prev => ({
+                ...prev,
                 width: parseInt(ref.style.width, 10),
                 height: parseInt(ref.style.height, 10),
                 x: position.x,
                 y: position.y
-            }
-        }));
+            }));
+        } else {
+            dispatch(updateOverlay({
+                pageNumber,
+                index: idx,
+                overlay: {
+                    ...overlays[idx],
+                    width: parseInt(ref.style.width, 10),
+                    height: parseInt(ref.style.height, 10),
+                    x: position.x,
+                    y: position.y
+                }
+            }));
+        }
     };
 
     // Delete textbox
@@ -311,7 +312,7 @@ const PdfCanvasOverlay = ({ pageNumber, activeMode, pdfFile }) => {
                             key={idx}
                             size={{ width: action.width, height: action.height }}
                             position={{ x: action.x, y: action.y }}
-                            enableResizing={true}
+                            enableResizing={editingIndex !== idx}
                             disableDragging={false}
                             onDragStop={(e, d) => handleRndDragStop(e, d, idx)}
                             onResizeStop={(e, direction, ref, delta, position) => handleRndResizeStop(e, direction, ref, delta, position, idx)}
@@ -325,7 +326,7 @@ const PdfCanvasOverlay = ({ pageNumber, activeMode, pdfFile }) => {
                                 pointerEvents: 'auto',
                             }}
                         >
-                            {editingIndex === idx && showTextBox ? (
+                            {editingIndex === idx ? (
                                 <div style={{ width: '100%', position: 'relative' }}>
                                     <textarea
                                         style={{
@@ -421,11 +422,11 @@ const PdfCanvasOverlay = ({ pageNumber, activeMode, pdfFile }) => {
                 )
             ))}
             {/* New textbox overlay */}
-            {showTextBox && (
+            {showTextBox && editingIndex === null && (
                 <Rnd
                     size={{ width: textBox.width, height: textBox.height }}
                     position={{ x: textBox.x, y: textBox.y }}
-                    enableResizing={true}
+                    enableResizing={false}
                     disableDragging={activeMode !== 'addText'}
                     onDragStop={(e, d) => setTextBox({ ...textBox, x: d.x, y: d.y })}
                     onResizeStop={(e, direction, ref, delta, position) => setTextBox({
