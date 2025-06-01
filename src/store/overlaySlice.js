@@ -18,6 +18,11 @@ const overlaySlice = createSlice({
             if (!state.overlays[pageNumber]) state.overlays[pageNumber] = [];
             state.history.push(JSON.parse(JSON.stringify(state.overlays)));
             state.future = [];
+            if (overlay.type === 'addText') {
+                overlay.fontSize = overlay.fontSize || 16;
+                overlay.fontFamily = overlay.fontFamily || 'Arial';
+                overlay.fontWeight = overlay.fontWeight || 'normal';
+            }
             state.overlays[pageNumber].push(overlay);
         },
         updateOverlay(state, action) {
@@ -25,6 +30,11 @@ const overlaySlice = createSlice({
             if (state.overlays[pageNumber] && state.overlays[pageNumber][index]) {
                 state.history.push(JSON.parse(JSON.stringify(state.overlays)));
                 state.future = [];
+                if (overlay.type === 'addText') {
+                    overlay.fontSize = overlay.fontSize || 16;
+                    overlay.fontFamily = overlay.fontFamily || 'Arial';
+                    overlay.fontWeight = overlay.fontWeight || 'normal';
+                }
                 state.overlays[pageNumber][index] = overlay;
             }
         },

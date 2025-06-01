@@ -15,6 +15,16 @@ const PdfCanvasOverlay = ({ pageNumber, activeMode, pdfFile, onCanvasSizeChange 
     const [addMode, setAddMode] = useState(false);
     const [editingIndex, setEditingIndex] = useState(null);
 
+    // Supported font families and weights/styles based on your files
+    const FONT_FAMILIES = [
+        'Amatic SC', 'Lato', 'Norwester', 'Open Sans', 'Oswald', 'Poppins', 'Roboto', 'Roboto Condensed', 'Source Sans Pro'
+    ];
+    const FONT_WEIGHTS = [
+        'Thin', 'ExtraLight', 'Light', 'Regular', 'Medium', 'SemiBold', 'Bold', 'ExtraBold', 'Black'
+    ];
+    const FONT_STYLES = ['normal', 'italic'];
+    const FONT_SIZES = [12, 14, 16, 18, 20, 24, 28, 32];
+
     // Set canvas size and position to match the PDF page, using MutationObserver for robustness
     useEffect(() => {
         const canvas = canvasRef.current;
@@ -436,6 +446,20 @@ const PdfCanvasOverlay = ({ pageNumber, activeMode, pdfFile, onCanvasSizeChange 
                         >
                             {editingIndex === idx ? (
                                 <div style={{ width: '100%', position: 'relative' }}>
+                                    <div style={{ display: 'flex', gap: 8, marginBottom: 4 }}>
+                                        <select value={textBox.fontFamily || 'Roboto'} onChange={e => setTextBox(prev => ({ ...prev, fontFamily: e.target.value }))}>
+                                            {FONT_FAMILIES.map(f => <option key={f} value={f}>{f}</option>)}
+                                        </select>
+                                        <select value={textBox.fontWeight || 'Regular'} onChange={e => setTextBox(prev => ({ ...prev, fontWeight: e.target.value }))}>
+                                            {FONT_WEIGHTS.map(w => <option key={w} value={w}>{w}</option>)}
+                                        </select>
+                                        <select value={textBox.fontStyle || 'normal'} onChange={e => setTextBox(prev => ({ ...prev, fontStyle: e.target.value }))}>
+                                            {FONT_STYLES.map(s => <option key={s} value={s}>{s}</option>)}
+                                        </select>
+                                        <select value={textBox.fontSize || 16} onChange={e => setTextBox(prev => ({ ...prev, fontSize: Number(e.target.value) }))}>
+                                            {FONT_SIZES.map(s => <option key={s} value={s}>{s}px</option>)}
+                                        </select>
+                                    </div>
                                     <textarea
                                         style={{
                                             width: '100%',
@@ -444,8 +468,10 @@ const PdfCanvasOverlay = ({ pageNumber, activeMode, pdfFile, onCanvasSizeChange 
                                             background: 'transparent',
                                             resize: 'none',
                                             outline: 'none',
-                                            fontSize: 16,
-                                            fontFamily: 'Arial',
+                                            fontSize: textBox.fontSize || 16,
+                                            fontFamily: textBox.fontFamily || 'Roboto',
+                                            fontWeight: textBox.fontWeight || 'Regular',
+                                            fontStyle: textBox.fontStyle || 'normal',
                                             padding: '4px 40px 4px 4px',
                                             overflow: 'hidden',
                                             whiteSpace: 'nowrap'
@@ -481,11 +507,14 @@ const PdfCanvasOverlay = ({ pageNumber, activeMode, pdfFile, onCanvasSizeChange 
                                         width: '100%',
                                         height: '100%',
                                         wordBreak: 'break-word',
-                                        fontSize: 16,
-                                        fontFamily: 'Arial',
+                                        fontSize: action.fontSize || 16,
+                                        fontFamily: action.fontFamily || 'Roboto',
+                                        fontWeight: action.fontWeight || 'Regular',
+                                        fontStyle: action.fontStyle || 'normal',
                                         display: 'block',
                                         minHeight: '50px',
-                                        whiteSpace: 'pre-wrap'
+                                        whiteSpace: 'pre-wrap',
+                                        overflowWrap: 'break-word',
                                     }}>{action.text}</span>
                                     <button
                                         style={{ position: 'absolute', top: 4, right: 4, zIndex: 11, background: 'transparent', border: 'none', cursor: 'pointer', color: '#c00', fontWeight: 'bold' }}
@@ -514,14 +543,18 @@ const PdfCanvasOverlay = ({ pageNumber, activeMode, pdfFile, onCanvasSizeChange 
                                 width: action.width,
                                 height: action.height,
                                 zIndex: 10,
-                                fontSize: 16,
-                                fontFamily: 'Arial',
+                                fontSize: action.fontSize || 16,
+                                fontFamily: action.fontFamily || 'Roboto',
+                                fontWeight: action.fontWeight || 'Regular',
+                                fontStyle: action.fontStyle || 'normal',
                                 background: 'transparent',
                                 color: '#222',
                                 pointerEvents: 'none',
-                                display: 'flex',
-                                alignItems: 'center',
                                 wordBreak: 'break-word',
+                                overflowWrap: 'break-word',
+                                whiteSpace: 'pre-wrap',
+                                display: 'block',
+                                minHeight: '50px',
                             }}
                         >
                             {action.text}
@@ -555,6 +588,20 @@ const PdfCanvasOverlay = ({ pageNumber, activeMode, pdfFile, onCanvasSizeChange 
                     }}
                 >
                     <div style={{ width: '100%', position: 'relative' }}>
+                        <div style={{ display: 'flex', gap: 8, marginBottom: 4 }}>
+                            <select value={textBox.fontFamily || 'Roboto'} onChange={e => setTextBox(prev => ({ ...prev, fontFamily: e.target.value }))}>
+                                {FONT_FAMILIES.map(f => <option key={f} value={f}>{f}</option>)}
+                            </select>
+                            <select value={textBox.fontWeight || 'Regular'} onChange={e => setTextBox(prev => ({ ...prev, fontWeight: e.target.value }))}>
+                                {FONT_WEIGHTS.map(w => <option key={w} value={w}>{w}</option>)}
+                            </select>
+                            <select value={textBox.fontStyle || 'normal'} onChange={e => setTextBox(prev => ({ ...prev, fontStyle: e.target.value }))}>
+                                {FONT_STYLES.map(s => <option key={s} value={s}>{s}</option>)}
+                            </select>
+                            <select value={textBox.fontSize || 16} onChange={e => setTextBox(prev => ({ ...prev, fontSize: Number(e.target.value) }))}>
+                                {FONT_SIZES.map(s => <option key={s} value={s}>{s}px</option>)}
+                            </select>
+                        </div>
                         <textarea
                             style={{
                                 width: '100%',
@@ -563,8 +610,10 @@ const PdfCanvasOverlay = ({ pageNumber, activeMode, pdfFile, onCanvasSizeChange 
                                 background: 'transparent',
                                 resize: 'none',
                                 outline: 'none',
-                                fontSize: 16,
-                                fontFamily: 'Arial',
+                                fontSize: textBox.fontSize || 16,
+                                fontFamily: textBox.fontFamily || 'Roboto',
+                                fontWeight: textBox.fontWeight || 'Regular',
+                                fontStyle: textBox.fontStyle || 'normal',
                                 padding: '4px 40px 4px 4px',
                                 overflow: 'hidden',
                                 whiteSpace: 'nowrap'
