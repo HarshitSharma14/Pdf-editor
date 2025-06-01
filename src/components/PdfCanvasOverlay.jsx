@@ -8,7 +8,7 @@ const PdfCanvasOverlay = ({ pageNumber, activeMode, pdfFile }) => {
     const dispatch = useDispatch();
     const overlays = useSelector(state => state.overlay.overlays[pageNumber] || []);
     const [isDrawing, setIsDrawing] = useState(false);
-    const [startPos, setStartPos] = useState({ x: 0, y: 0 });
+    const [startPos, setStartPos] = useState({ x: 0, y: 0, currentX: 0, currentY: 0 });
     const [showTextBox, setShowTextBox] = useState(false);
     const [textBox, setTextBox] = useState({ x: 0, y: 0, width: 120, height: 30, text: '' });
     const [addMode, setAddMode] = useState(false);
@@ -30,6 +30,7 @@ const PdfCanvasOverlay = ({ pageNumber, activeMode, pdfFile }) => {
                 canvas.style.position = 'absolute';
                 canvas.style.top = `${pdfPage.offsetTop}px`;
                 canvas.style.left = `${pdfPage.offsetLeft}px`;
+                // Only disable pointer events when no tool is active
                 canvas.style.pointerEvents = activeMode ? 'auto' : 'none';
                 canvas.style.cursor = activeMode === 'addText' ? (addMode ? 'text' : 'pointer') : (activeMode ? 'crosshair' : 'default');
                 canvas.style.zIndex = 1;
@@ -53,6 +54,8 @@ const PdfCanvasOverlay = ({ pageNumber, activeMode, pdfFile }) => {
         if (!canvas) return;
         const ctx = canvas.getContext('2d');
         ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+        // Always draw all overlays
         overlays.forEach(action => {
             if (action.type === 'addText') return;
             switch (action.type) {
@@ -68,7 +71,18 @@ const PdfCanvasOverlay = ({ pageNumber, activeMode, pdfFile }) => {
                     break;
             }
         });
-    }, [overlays]);
+
+        // If drawing, show the current selection
+        if (isDrawing && activeMode && activeMode !== 'addText') {
+            ctx.fillStyle = activeMode === 'blur' ? 'rgba(0, 0, 0, 0.5)' : 'white';
+            ctx.fillRect(
+                startPos.x,
+                startPos.y,
+                startPos.currentX - startPos.x,
+                startPos.currentY - startPos.y
+            );
+        }
+    }, [overlays, isDrawing, activeMode, startPos]);
 
     // Add Text: Only allow adding after clicking Add Text button
     const handleCanvasClick = (e) => {
@@ -77,6 +91,13 @@ const PdfCanvasOverlay = ({ pageNumber, activeMode, pdfFile }) => {
         setTextBox({ x: pos.x, y: pos.y, width: 120, height: 50, text: '' });
         setShowTextBox(true);
         setAddMode(false);
+        setEditingIndex(null);
+    };
+
+    // Add Text: Button handler
+    const handleAddTextButton = () => {
+        setAddMode(true);
+        setShowTextBox(false);
         setEditingIndex(null);
     };
 
@@ -89,6 +110,7 @@ const PdfCanvasOverlay = ({ pageNumber, activeMode, pdfFile }) => {
             }));
         }
         setShowTextBox(false);
+        setAddMode(false);
     };
 
     // Add Text: Edit existing textbox
@@ -176,37 +198,15 @@ const PdfCanvasOverlay = ({ pageNumber, activeMode, pdfFile }) => {
         if (!activeMode || activeMode === 'addText') return;
         setIsDrawing(true);
         const pos = getMousePosition(e);
-        setStartPos(pos);
+        setStartPos({ x: pos.x, y: pos.y, currentX: pos.x, currentY: pos.y });
     };
+
     const handleCanvasMouseMove = (e) => {
         if (!isDrawing || !activeMode || activeMode === 'addText') return;
-        const canvas = canvasRef.current;
-        const ctx = canvas.getContext('2d');
         const currentPos = getMousePosition(e);
-        ctx.clearRect(0, 0, canvas.width, canvas.height);
-        overlays.forEach(action => {
-            if (action.type === 'addText') return;
-            switch (action.type) {
-                case 'blur':
-                    ctx.fillStyle = 'rgba(0, 0, 0, 0.5)';
-                    ctx.fillRect(action.x, action.y, action.width, action.height);
-                    break;
-                case 'erase':
-                    ctx.fillStyle = 'white';
-                    ctx.fillRect(action.x, action.y, action.width, action.height);
-                    break;
-                default:
-                    break;
-            }
-        });
-        ctx.fillStyle = activeMode === 'blur' ? 'rgba(0, 0, 0, 0.5)' : 'white';
-        ctx.fillRect(
-            startPos.x,
-            startPos.y,
-            currentPos.x - startPos.x,
-            currentPos.y - startPos.y
-        );
+        setStartPos(prev => ({ ...prev, currentX: currentPos.x, currentY: currentPos.y }));
     };
+
     const handleMouseUp = (e) => {
         if (!isDrawing || !activeMode || activeMode === 'addText') return;
         setIsDrawing(false);
@@ -221,13 +221,6 @@ const PdfCanvasOverlay = ({ pageNumber, activeMode, pdfFile }) => {
                 height: endPos.y - startPos.y,
             }
         }));
-    };
-
-    // Add Text: Button handler
-    const handleAddTextButton = () => {
-        setAddMode(true);
-        setShowTextBox(false);
-        setEditingIndex(null);
     };
 
     // Rnd drag handler
@@ -275,28 +268,49 @@ const PdfCanvasOverlay = ({ pageNumber, activeMode, pdfFile }) => {
 
     return (
         <>
-            {activeMode === 'addText' && (
-                <>
+            <div style={{ position: 'absolute', top: 10, left: 10, zIndex: 20, display: 'flex', gap: '10px' }}>
+                {activeMode === 'addText' && (
                     <button
-                        style={{ position: 'absolute', top: 10, left: 10, zIndex: 20 }}
                         onClick={handleAddTextButton}
+                        style={{
+                            background: addMode ? '#4CAF50' : '#007bff',
+                            color: 'white',
+                            border: 'none',
+                            padding: '5px 10px',
+                            borderRadius: '4px',
+                            cursor: 'pointer'
+                        }}
                     >
-                        Add Text
+                        {addMode ? 'Click to Add Text' : 'Add Text'}
                     </button>
-                    <button
-                        style={{ position: 'absolute', top: 10, left: 100, zIndex: 20 }}
-                        onClick={() => dispatch(undo())}
-                    >
-                        Back
-                    </button>
-                    <button
-                        style={{ position: 'absolute', top: 10, left: 170, zIndex: 20 }}
-                        onClick={() => dispatch(redo())}
-                    >
-                        Next
-                    </button>
-                </>
-            )}
+                )}
+                <button
+                    onClick={() => dispatch(undo())}
+                    style={{
+                        background: '#6c757d',
+                        color: 'white',
+                        border: 'none',
+                        padding: '5px 10px',
+                        borderRadius: '4px',
+                        cursor: 'pointer'
+                    }}
+                >
+                    Back
+                </button>
+                <button
+                    onClick={() => dispatch(redo())}
+                    style={{
+                        background: '#6c757d',
+                        color: 'white',
+                        border: 'none',
+                        padding: '5px 10px',
+                        borderRadius: '4px',
+                        cursor: 'pointer'
+                    }}
+                >
+                    Next
+                </button>
+            </div>
             <canvas
                 ref={canvasRef}
                 onMouseDown={handleMouseDown}
