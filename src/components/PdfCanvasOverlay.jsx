@@ -1,34 +1,54 @@
 import React, { useRef, useEffect, useState } from 'react';
 
-const PdfCanvasOverlay = ({ editActions, pageNumber, onEditAction, activeMode }) => {
+const PdfCanvasOverlay = ({ editActions, pageNumber, onEditAction, activeMode, pdfFile }) => {
     const canvasRef = useRef(null);
     const [isDrawing, setIsDrawing] = useState(false);
     const [startPos, setStartPos] = useState({ x: 0, y: 0 });
 
-    // Set canvas size and position to match PDF page
+    // Set canvas size and position to match the PDF page, using MutationObserver for robustness
     useEffect(() => {
+        const canvas = canvasRef.current;
+        if (!canvas) return;
+
+        let observer;
+
         const updateCanvasSize = () => {
-            const canvas = canvasRef.current;
-            if (canvas) {
-                // Find the PDF page's canvas
-                const pdfPage = canvas.parentElement.querySelector('.react-pdf__Page canvas');
-                if (pdfPage) {
-                    const rect = pdfPage.getBoundingClientRect();
-                    canvas.width = rect.width;
-                    canvas.height = rect.height;
-                    canvas.style.width = `${rect.width}px`;
-                    canvas.style.height = `${rect.height}px`;
-                    // Position overlay exactly over the PDF page
-                    canvas.style.position = 'absolute';
-                    canvas.style.top = `${pdfPage.offsetTop}px`;
-                    canvas.style.left = `${pdfPage.offsetLeft}px`;
-                }
+            const pdfPage = canvas.parentElement.querySelector('.react-pdf__Page canvas');
+            if (pdfPage) {
+                const rect = pdfPage.getBoundingClientRect();
+                canvas.width = pdfPage.width;
+                canvas.height = pdfPage.height;
+                canvas.style.width = `${rect.width}px`;
+                canvas.style.height = `${rect.height}px`;
+                canvas.style.position = 'absolute';
+                canvas.style.top = `${pdfPage.offsetTop}px`;
+                canvas.style.left = `${pdfPage.offsetLeft}px`;
+                canvas.style.pointerEvents = activeMode ? 'auto' : 'none';
+                canvas.style.cursor = activeMode ? 'crosshair' : 'default';
+                canvas.style.zIndex = 1;
             }
         };
-        updateCanvasSize();
+
+        // Observe DOM changes to detect when the PDF page is rendered
+        observer = new MutationObserver(() => {
+            updateCanvasSize();
+        });
+
+        if (canvas.parentElement) {
+            observer.observe(canvas.parentElement, { childList: true, subtree: true });
+        }
+
+        // Also update on window resize
         window.addEventListener('resize', updateCanvasSize);
-        return () => window.removeEventListener('resize', updateCanvasSize);
-    }, []);
+
+        // Initial call
+        updateCanvasSize();
+
+        return () => {
+            if (observer) observer.disconnect();
+            window.removeEventListener('resize', updateCanvasSize);
+        };
+    }, [activeMode, pageNumber, pdfFile]);
 
     // Draw existing actions
     useEffect(() => {
@@ -130,14 +150,6 @@ const PdfCanvasOverlay = ({ editActions, pageNumber, onEditAction, activeMode })
     return (
         <canvas
             ref={canvasRef}
-            style={{
-                pointerEvents: activeMode ? 'auto' : 'none',
-                cursor: activeMode ? 'crosshair' : 'default',
-                zIndex: 1
-            }}
-            onMouseDown={handleMouseDown}
-            onMouseMove={handleMouseMove}
-            onMouseUp={handleMouseUp}
         />
     );
 };

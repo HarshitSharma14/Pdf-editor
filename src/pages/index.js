@@ -70,6 +70,7 @@ export default function Home() {
                                 pageNumber={pageNumber}
                                 onEditAction={handleEditAction}
                                 activeMode={activeMode}
+                                pdfFile={pdfFile}
                             />
                         </Box>
                     </Box>
