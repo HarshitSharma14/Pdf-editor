@@ -5,6 +5,7 @@ import { Rnd } from 'react-rnd';
 
 const PdfCanvasOverlay = ({ pageNumber, activeMode, pdfFile }) => {
     const canvasRef = useRef(null);
+    const blurCanvasRef = useRef(null);
     const dispatch = useDispatch();
     const overlays = useSelector(state => state.overlay.overlays[pageNumber] || []);
     const [isDrawing, setIsDrawing] = useState(false);
@@ -17,7 +18,8 @@ const PdfCanvasOverlay = ({ pageNumber, activeMode, pdfFile }) => {
     // Set canvas size and position to match the PDF page, using MutationObserver for robustness
     useEffect(() => {
         const canvas = canvasRef.current;
-        if (!canvas) return;
+        const blurCanvas = blurCanvasRef.current;
+        if (!canvas || !blurCanvas) return;
         let observer;
         const updateCanvasSize = () => {
             const pdfPage = canvas.parentElement.querySelector('.react-pdf__Page canvas');
@@ -25,15 +27,23 @@ const PdfCanvasOverlay = ({ pageNumber, activeMode, pdfFile }) => {
                 const rect = pdfPage.getBoundingClientRect();
                 canvas.width = pdfPage.width;
                 canvas.height = pdfPage.height;
+                blurCanvas.width = pdfPage.width;
+                blurCanvas.height = pdfPage.height;
                 canvas.style.width = `${rect.width}px`;
                 canvas.style.height = `${rect.height}px`;
+                blurCanvas.style.width = `${rect.width}px`;
+                blurCanvas.style.height = `${rect.height}px`;
                 canvas.style.position = 'absolute';
+                blurCanvas.style.position = 'absolute';
                 canvas.style.top = `${pdfPage.offsetTop}px`;
+                blurCanvas.style.top = `${pdfPage.offsetTop}px`;
                 canvas.style.left = `${pdfPage.offsetLeft}px`;
-                // Only disable pointer events when no tool is active
+                blurCanvas.style.left = `${pdfPage.offsetLeft}px`;
                 canvas.style.pointerEvents = activeMode ? 'auto' : 'none';
+                blurCanvas.style.pointerEvents = 'none';
                 canvas.style.cursor = activeMode === 'addText' ? (addMode ? 'text' : 'pointer') : (activeMode ? 'crosshair' : 'default');
                 canvas.style.zIndex = 1;
+                blurCanvas.style.zIndex = 2;
             }
         };
         observer = new MutationObserver(() => { updateCanvasSize(); });
@@ -51,36 +61,109 @@ const PdfCanvasOverlay = ({ pageNumber, activeMode, pdfFile }) => {
     // Draw overlays except addText (handled as overlays)
     useEffect(() => {
         const canvas = canvasRef.current;
-        if (!canvas) return;
-        const ctx = canvas.getContext('2d');
-        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        const blurCanvas = blurCanvasRef.current;
+        if (!canvas || !blurCanvas) return;
 
-        // Always draw all overlays
+        const ctx = canvas.getContext('2d');
+        const blurCtx = blurCanvas.getContext('2d');
+
+        // Clear both canvases
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        blurCtx.clearRect(0, 0, blurCanvas.width, blurCanvas.height);
+
+        // Draw PDF content to blur canvas
+        const pdfPage = canvas.parentElement.querySelector('.react-pdf__Page canvas');
+        if (pdfPage) {
+            blurCtx.drawImage(pdfPage, 0, 0, canvas.width, canvas.height);
+        }
+
+        // Apply blur to all blur areas
         overlays.forEach(action => {
-            if (action.type === 'addText') return;
-            switch (action.type) {
-                case 'blur':
-                    ctx.fillStyle = 'rgba(0, 0, 0, 0.5)';
-                    ctx.fillRect(action.x, action.y, action.width, action.height);
-                    break;
-                case 'erase':
-                    ctx.fillStyle = 'white';
-                    ctx.fillRect(action.x, action.y, action.width, action.height);
-                    break;
-                default:
-                    break;
+            if (action.type === 'blur') {
+                const width = Math.abs(action.width);
+                const height = Math.abs(action.height);
+
+                // Skip if dimensions are too small
+                if (width < 5 || height < 5) return;
+
+                // Create a temporary canvas for this specific blur area
+                const tempCanvas = document.createElement('canvas');
+                tempCanvas.width = width;
+                tempCanvas.height = height;
+                const tempCtx = tempCanvas.getContext('2d');
+
+                // Draw the specific area to temp canvas
+                tempCtx.drawImage(
+                    blurCanvas,
+                    action.x, action.y, width, height,
+                    0, 0, width, height
+                );
+
+                // Apply blur to temp canvas
+                tempCtx.filter = 'blur(8px)';
+                tempCtx.drawImage(tempCanvas, 0, 0);
+
+                // Draw the blurred area back to blur canvas
+                blurCtx.clearRect(action.x, action.y, width, height);
+                blurCtx.drawImage(tempCanvas, action.x, action.y);
+            }
+        });
+
+        // Draw erase areas on blur canvas (so they appear above PDF and blur)
+        overlays.forEach(action => {
+            if (action.type === 'erase') {
+                const width = Math.abs(action.width);
+                const height = Math.abs(action.height);
+
+                // Skip if dimensions are too small
+                if (width < 5 || height < 5) return;
+
+                blurCtx.fillStyle = 'white';
+                blurCtx.fillRect(action.x, action.y, width, height);
             }
         });
 
         // If drawing, show the current selection
         if (isDrawing && activeMode && activeMode !== 'addText') {
-            ctx.fillStyle = activeMode === 'blur' ? 'rgba(0, 0, 0, 0.5)' : 'white';
-            ctx.fillRect(
-                startPos.x,
-                startPos.y,
-                startPos.currentX - startPos.x,
-                startPos.currentY - startPos.y
-            );
+            const width = Math.abs(startPos.currentX - startPos.x);
+            const height = Math.abs(startPos.currentY - startPos.y);
+
+            // Skip if dimensions are too small
+            if (width < 5 || height < 5) return;
+
+            if (activeMode === 'blur') {
+                // Create a temporary canvas for the preview
+                const tempCanvas = document.createElement('canvas');
+                tempCanvas.width = width;
+                tempCanvas.height = height;
+                const tempCtx = tempCanvas.getContext('2d');
+
+                // Draw the specific area to temp canvas
+                tempCtx.drawImage(
+                    blurCanvas,
+                    startPos.x, startPos.y, width, height,
+                    0, 0, width, height
+                );
+
+                // Apply blur to temp canvas
+                tempCtx.filter = 'blur(8px)';
+                tempCtx.drawImage(tempCanvas, 0, 0);
+
+                // Draw the blurred preview
+                blurCtx.clearRect(startPos.x, startPos.y, width, height);
+                blurCtx.drawImage(tempCanvas, startPos.x, startPos.y);
+            } else if (activeMode === 'erase') {
+                // Draw erase preview on main canvas
+                ctx.fillStyle = 'white';
+                ctx.globalAlpha = 0.5;
+                ctx.fillRect(
+                    startPos.x,
+                    startPos.y,
+                    width,
+                    height
+                );
+                ctx.globalAlpha = 1.0;
+            }
         }
     }, [overlays, isDrawing, activeMode, startPos]);
 
@@ -211,16 +294,22 @@ const PdfCanvasOverlay = ({ pageNumber, activeMode, pdfFile }) => {
         if (!isDrawing || !activeMode || activeMode === 'addText') return;
         setIsDrawing(false);
         const endPos = getMousePosition(e);
-        dispatch(addOverlay({
-            pageNumber,
-            overlay: {
-                type: activeMode,
-                x: startPos.x,
-                y: startPos.y,
-                width: endPos.x - startPos.x,
-                height: endPos.y - startPos.y,
-            }
-        }));
+        const width = endPos.x - startPos.x;
+        const height = endPos.y - startPos.y;
+
+        // Only add overlay if there's actual area selected
+        if (Math.abs(width) > 5 && Math.abs(height) > 5) {
+            dispatch(addOverlay({
+                pageNumber,
+                overlay: {
+                    type: activeMode,
+                    x: width < 0 ? endPos.x : startPos.x,
+                    y: height < 0 ? endPos.y : startPos.y,
+                    width: Math.abs(width),
+                    height: Math.abs(height),
+                }
+            }));
+        }
     };
 
     // Rnd drag handler
@@ -311,6 +400,7 @@ const PdfCanvasOverlay = ({ pageNumber, activeMode, pdfFile }) => {
                     Next
                 </button>
             </div>
+            <canvas ref={blurCanvasRef} />
             <canvas
                 ref={canvasRef}
                 onMouseDown={handleMouseDown}
