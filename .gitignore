@@ -20,3 +20,6 @@ yarn-error.log*
 
 # vercel
 .vercel 
+
+
+# now listen there is one small issue. the cursor that we are using is the shape of a plus sign but has the actual pointer at the bottom and not the centre, so its causing confusion and also feeling like its going a bit over the top and leaving some area on the bottom of the pdf, can we do something about it? 
