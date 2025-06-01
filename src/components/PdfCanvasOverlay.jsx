@@ -1,21 +1,34 @@
-import React, { useRef, useEffect, useState } from 'react';
+import React, { useRef, useEffect, useState, useCallback } from 'react';
 import { useSelector, useDispatch } from 'react-redux';
-import { addOverlay, updateOverlay, removeOverlay, undo, redo } from '../store/overlaySlice';
+import {
+    addOverlay,
+    updateOverlay,
+    removeOverlay,
+    undo,
+    redo,
+    setPdfDimensions,
+    getOverlaysInPixels
+} from '../store/overlaySlice';
 import { Rnd } from 'react-rnd';
 
-const PdfCanvasOverlay = ({ pageNumber, activeMode, pdfFile, onCanvasSizeChange }) => {
+const ResponsivePdfCanvasOverlay = ({ pageNumber, activeMode, pdfFile, pdfDimensions }) => {
     const canvasRef = useRef(null);
     const blurCanvasRef = useRef(null);
+    const containerRef = useRef(null);
     const dispatch = useDispatch();
-    const overlays = useSelector(state => state.overlay.overlays[pageNumber] || []);
+
+    // Get overlays in pixel coordinates for rendering
+    const overlaysPixels = useSelector(state => getOverlaysInPixels(state, pageNumber));
+
     const [isDrawing, setIsDrawing] = useState(false);
     const [startPos, setStartPos] = useState({ x: 0, y: 0, currentX: 0, currentY: 0 });
     const [showTextBox, setShowTextBox] = useState(false);
     const [textBox, setTextBox] = useState({ x: 0, y: 0, width: 120, height: 30, text: '' });
     const [addMode, setAddMode] = useState(false);
     const [editingIndex, setEditingIndex] = useState(null);
+    const [canvasReady, setCanvasReady] = useState(false);
 
-    // Supported font families and weights/styles based on your files
+    // Font configuration
     const FONT_FAMILIES = [
         'Amatic SC', 'Lato', 'Norwester', 'Open Sans', 'Oswald', 'Poppins', 'Roboto', 'Roboto Condensed', 'Source Sans Pro'
     ];
@@ -25,380 +38,407 @@ const PdfCanvasOverlay = ({ pageNumber, activeMode, pdfFile, onCanvasSizeChange 
     const FONT_STYLES = ['normal', 'italic'];
     const FONT_SIZES = [12, 14, 16, 18, 20, 24, 28, 32];
 
-    // Set canvas size and position to match the PDF page, using MutationObserver for robustness
+    // Store PDF dimensions in Redux when they change
     useEffect(() => {
+        if (pdfDimensions && pdfDimensions.width && pdfDimensions.height) {
+            dispatch(setPdfDimensions({ pageNumber, dimensions: pdfDimensions }));
+        }
+    }, [pdfDimensions, pageNumber, dispatch]);
+
+    const getCursor = () => {
+        switch (activeMode) {
+            case 'addText':
+                return addMode ? 'text' : 'pointer';
+            case 'blur':
+            case 'erase':
+                return 'crosshair';
+            default:
+                return 'default';
+        }
+    };
+
+    // Simple, reliable canvas positioning
+    const updateCanvasPosition = useCallback(() => {
         const canvas = canvasRef.current;
         const blurCanvas = blurCanvasRef.current;
-        if (!canvas || !blurCanvas) return;
-        let observer;
-        const updateCanvasSize = () => {
-            const pdfPage = canvas.parentElement.querySelector('.react-pdf__Page canvas');
-            if (pdfPage) {
-                const rect = pdfPage.getBoundingClientRect();
-                canvas.width = pdfPage.width;
-                canvas.height = pdfPage.height;
-                blurCanvas.width = pdfPage.width;
-                blurCanvas.height = pdfPage.height;
-                canvas.style.width = `${rect.width}px`;
-                canvas.style.height = `${rect.height}px`;
-                blurCanvas.style.width = `${rect.width}px`;
-                blurCanvas.style.height = `${rect.height}px`;
-                canvas.style.position = 'absolute';
-                blurCanvas.style.position = 'absolute';
-                canvas.style.top = `${pdfPage.offsetTop}px`;
-                blurCanvas.style.top = `${pdfPage.offsetTop}px`;
-                canvas.style.left = `${pdfPage.offsetLeft}px`;
-                blurCanvas.style.left = `${pdfPage.offsetLeft}px`;
-                canvas.style.pointerEvents = activeMode ? 'auto' : 'none';
-                blurCanvas.style.pointerEvents = 'none';
-                canvas.style.cursor = activeMode === 'addText' ? (addMode ? 'text' : 'pointer') : (activeMode ? 'crosshair' : 'default');
-                canvas.style.zIndex = 1;
-                blurCanvas.style.zIndex = 2;
-                // Notify parent of canvas size in pixels
-                if (onCanvasSizeChange) {
-                    onCanvasSizeChange({ width: pdfPage.width, height: pdfPage.height });
-                }
+        const container = containerRef.current;
+
+        if (!canvas || !blurCanvas || !container) return false;
+
+        // Find PDF canvas
+        const pdfCanvas = document.querySelector('.react-pdf__Page canvas');
+        if (!pdfCanvas) return false;
+
+        const pdfRect = pdfCanvas.getBoundingClientRect();
+        const containerRect = container.getBoundingClientRect();
+
+        const left = Math.round(pdfRect.left - containerRect.left);
+        const top = Math.round(pdfRect.top - containerRect.top);
+
+        // Configure both canvases to exactly match PDF
+        [canvas, blurCanvas].forEach((c, index) => {
+            c.width = pdfCanvas.width;
+            c.height = pdfCanvas.height;
+            c.style.width = `${Math.round(pdfRect.width)}px`;
+            c.style.height = `${Math.round(pdfRect.height)}px`;
+            c.style.position = 'absolute';
+            c.style.left = `${left}px`;
+            c.style.top = `${top}px`;
+            c.style.pointerEvents = index === 0 && activeMode !== 'view' ? 'auto' : 'none';
+            c.style.zIndex = index === 0 ? '20' : '21';
+        });
+
+        canvas.style.cursor = getCursor();
+        setCanvasReady(true);
+        return true;
+    }, [activeMode]);
+
+    // Setup canvas positioning with minimal updates
+    useEffect(() => {
+        let mounted = true;
+        let timeoutId;
+
+        const setupCanvas = () => {
+            if (!mounted) return;
+
+            const success = updateCanvasPosition();
+            if (!success) {
+                timeoutId = setTimeout(setupCanvas, 100);
             }
         };
-        observer = new MutationObserver(() => { updateCanvasSize(); });
-        if (canvas.parentElement) {
-            observer.observe(canvas.parentElement, { childList: true, subtree: true });
-        }
-        window.addEventListener('resize', updateCanvasSize);
-        updateCanvasSize();
-        return () => {
-            if (observer) observer.disconnect();
-            window.removeEventListener('resize', updateCanvasSize);
-        };
-    }, [activeMode, pageNumber, pdfFile, addMode, onCanvasSizeChange]);
 
-    // Draw overlays except addText (handled as overlays)
+        setupCanvas();
+
+        const handleResize = () => {
+            clearTimeout(timeoutId);
+            timeoutId = setTimeout(setupCanvas, 200);
+        };
+
+        window.addEventListener('resize', handleResize);
+
+        return () => {
+            mounted = false;
+            clearTimeout(timeoutId);
+            window.removeEventListener('resize', handleResize);
+        };
+    }, [updateCanvasPosition, pageNumber, pdfFile]);
+
+    // IMMEDIATE canvas drawing - no debouncing for visual feedback
     useEffect(() => {
+        if (!canvasReady) return;
+
         const canvas = canvasRef.current;
         const blurCanvas = blurCanvasRef.current;
         if (!canvas || !blurCanvas) return;
 
         const ctx = canvas.getContext('2d');
         const blurCtx = blurCanvas.getContext('2d');
+        const pdfCanvas = document.querySelector('.react-pdf__Page canvas');
 
-        // Clear both canvases
+        if (!pdfCanvas) return;
+
+        // Clear and redraw immediately
         ctx.clearRect(0, 0, canvas.width, canvas.height);
         blurCtx.clearRect(0, 0, blurCanvas.width, blurCanvas.height);
 
-        // Draw PDF content to blur canvas
-        const pdfPage = canvas.parentElement.querySelector('.react-pdf__Page canvas');
-        if (pdfPage) {
-            blurCtx.drawImage(pdfPage, 0, 0, canvas.width, canvas.height);
+        // Copy PDF to blur canvas
+        try {
+            blurCtx.drawImage(pdfCanvas, 0, 0, canvas.width, canvas.height);
+        } catch (e) {
+            return; // PDF not ready
         }
 
-        // Apply blur to all blur areas
-        overlays.forEach(action => {
-            if (action.type === 'blur') {
-                const width = Math.abs(action.width);
-                const height = Math.abs(action.height);
+        // Draw all overlays
+        overlaysPixels.forEach((action) => {
+            const width = Math.abs(action.width);
+            const height = Math.abs(action.height);
+            if (width < 2 || height < 2) return;
 
-                // Skip if dimensions are too small
-                if (width < 5 || height < 5) return;
+            try {
+                if (action.type === 'blur') {
+                    // Create blur effect
+                    const tempCanvas = document.createElement('canvas');
+                    tempCanvas.width = width;
+                    tempCanvas.height = height;
+                    const tempCtx = tempCanvas.getContext('2d');
 
-                // Create a temporary canvas for this specific blur area
-                const tempCanvas = document.createElement('canvas');
-                tempCanvas.width = width;
-                tempCanvas.height = height;
-                const tempCtx = tempCanvas.getContext('2d');
+                    tempCtx.drawImage(pdfCanvas, action.x, action.y, width, height, 0, 0, width, height);
+                    tempCtx.filter = 'blur(12px)';
+                    tempCtx.drawImage(tempCanvas, 0, 0);
 
-                // Draw the specific area to temp canvas
-                tempCtx.drawImage(
-                    blurCanvas,
-                    action.x, action.y, width, height,
-                    0, 0, width, height
-                );
+                    blurCtx.clearRect(action.x, action.y, width, height);
+                    blurCtx.drawImage(tempCanvas, action.x, action.y);
 
-                // Apply blur to temp canvas
-                tempCtx.filter = 'blur(8px)';
-                tempCtx.drawImage(tempCanvas, 0, 0);
+                    // Show border only in edit mode
+                    if (activeMode === 'blur') {
+                        blurCtx.strokeStyle = 'rgba(0, 100, 255, 0.6)';
+                        blurCtx.lineWidth = 2;
+                        blurCtx.setLineDash([5, 5]);
+                        blurCtx.strokeRect(action.x, action.y, width, height);
+                        blurCtx.setLineDash([]);
+                    }
+                } else if (action.type === 'erase') {
+                    blurCtx.fillStyle = 'white';
+                    blurCtx.fillRect(action.x, action.y, width, height);
 
-                // Draw the blurred area back to blur canvas
-                blurCtx.clearRect(action.x, action.y, width, height);
-                blurCtx.drawImage(tempCanvas, action.x, action.y);
+                    if (activeMode === 'erase') {
+                        blurCtx.strokeStyle = 'rgba(255, 0, 0, 0.6)';
+                        blurCtx.lineWidth = 2;
+                        blurCtx.setLineDash([5, 5]);
+                        blurCtx.strokeRect(action.x, action.y, width, height);
+                        blurCtx.setLineDash([]);
+                    }
+                }
+            } catch (e) {
+                // Skip on error
             }
         });
 
-        // Draw erase areas on blur canvas (so they appear above PDF and blur)
-        overlays.forEach(action => {
-            if (action.type === 'erase') {
-                const width = Math.abs(action.width);
-                const height = Math.abs(action.height);
-
-                // Skip if dimensions are too small
-                if (width < 5 || height < 5) return;
-
-                blurCtx.fillStyle = 'white';
-                blurCtx.fillRect(action.x, action.y, width, height);
-            }
-        });
-
-        // If drawing, show the current selection
+        // Draw live preview while drawing
         if (isDrawing && activeMode && activeMode !== 'addText') {
             const width = Math.abs(startPos.currentX - startPos.x);
             const height = Math.abs(startPos.currentY - startPos.y);
 
-            // Skip if dimensions are too small
-            if (width < 5 || height < 5) return;
+            if (width > 5 && height > 5) {
+                const previewX = Math.min(startPos.x, startPos.currentX);
+                const previewY = Math.min(startPos.y, startPos.currentY);
 
-            if (activeMode === 'blur') {
-                // Create a temporary canvas for the preview
-                const tempCanvas = document.createElement('canvas');
-                tempCanvas.width = width;
-                tempCanvas.height = height;
-                const tempCtx = tempCanvas.getContext('2d');
-
-                // Draw the specific area to temp canvas
-                tempCtx.drawImage(
-                    blurCanvas,
-                    startPos.x, startPos.y, width, height,
-                    0, 0, width, height
-                );
-
-                // Apply blur to temp canvas
-                tempCtx.filter = 'blur(8px)';
-                tempCtx.drawImage(tempCanvas, 0, 0);
-
-                // Draw the blurred preview
-                blurCtx.clearRect(startPos.x, startPos.y, width, height);
-                blurCtx.drawImage(tempCanvas, startPos.x, startPos.y);
-            } else if (activeMode === 'erase') {
-                // Draw erase preview on main canvas
-                ctx.fillStyle = 'white';
-                ctx.globalAlpha = 0.5;
-                ctx.fillRect(
-                    startPos.x,
-                    startPos.y,
-                    width,
-                    height
-                );
-                ctx.globalAlpha = 1.0;
+                if (activeMode === 'blur') {
+                    ctx.fillStyle = 'rgba(0, 100, 255, 0.3)';
+                    ctx.fillRect(previewX, previewY, width, height);
+                    ctx.strokeStyle = 'rgba(0, 100, 255, 0.8)';
+                    ctx.lineWidth = 2;
+                    ctx.setLineDash([3, 3]);
+                    ctx.strokeRect(previewX, previewY, width, height);
+                    ctx.setLineDash([]);
+                } else if (activeMode === 'erase') {
+                    ctx.fillStyle = 'rgba(255, 255, 255, 0.8)';
+                    ctx.fillRect(previewX, previewY, width, height);
+                    ctx.strokeStyle = 'rgba(255, 0, 0, 0.8)';
+                    ctx.lineWidth = 2;
+                    ctx.setLineDash([3, 3]);
+                    ctx.strokeRect(previewX, previewY, width, height);
+                    ctx.setLineDash([]);
+                }
             }
         }
-    }, [overlays, isDrawing, activeMode, startPos]);
+    }, [overlaysPixels, isDrawing, activeMode, startPos, canvasReady]);
 
-    // Add Text: Only allow adding after clicking Add Text button
-    const handleCanvasClick = (e) => {
-        if (!(activeMode === 'addText' && addMode)) return;
+    // Mouse position helper
+    const getMousePosition = useCallback((e) => {
+        const canvas = canvasRef.current;
+        if (!canvas) return { x: 0, y: 0 };
+
+        const rect = canvas.getBoundingClientRect();
+        return {
+            x: e.clientX - rect.left,
+            y: e.clientY - rect.top
+        };
+    }, []);
+
+    // Drawing event handlers
+    const handleMouseDown = useCallback((e) => {
+        if (!activeMode || activeMode === 'addText' || activeMode === 'view') return;
+
+        setIsDrawing(true);
         const pos = getMousePosition(e);
-        setTextBox({ x: pos.x, y: pos.y, width: 120, height: 50, text: '' });
+        setStartPos({ x: pos.x, y: pos.y, currentX: pos.x, currentY: pos.y });
+    }, [activeMode, getMousePosition]);
+
+    const handleMouseMove = useCallback((e) => {
+        if (!isDrawing || !activeMode || activeMode === 'addText') return;
+
+        const currentPos = getMousePosition(e);
+        setStartPos(prev => ({ ...prev, currentX: currentPos.x, currentY: currentPos.y }));
+    }, [isDrawing, activeMode, getMousePosition]);
+
+    const handleMouseUp = useCallback((e) => {
+        if (!isDrawing || !activeMode || activeMode === 'addText' || !pdfDimensions) return;
+
+        setIsDrawing(false);
+        const endPos = getMousePosition(e);
+        const width = endPos.x - startPos.x;
+        const height = endPos.y - startPos.y;
+
+        if (Math.abs(width) > 10 && Math.abs(height) > 10) {
+            const overlayData = {
+                type: activeMode,
+                x: width < 0 ? endPos.x : startPos.x,
+                y: height < 0 ? endPos.y : startPos.y,
+                width: Math.abs(width),
+                height: Math.abs(height),
+            };
+
+            dispatch(addOverlay({
+                pageNumber,
+                overlay: overlayData,
+                pdfDimensions
+            }));
+        }
+    }, [isDrawing, activeMode, startPos, getMousePosition, pageNumber, pdfDimensions, dispatch]);
+
+    // Text handling
+    const handleCanvasClick = useCallback((e) => {
+        if (activeMode !== 'addText' || !addMode) return;
+
+        const pos = getMousePosition(e);
+        setTextBox({
+            x: pos.x,
+            y: pos.y,
+            width: 150,
+            height: 40,
+            text: '',
+            fontSize: 16,
+            fontFamily: 'Roboto',
+            fontWeight: 'Regular',
+            fontStyle: 'normal'
+        });
         setShowTextBox(true);
         setAddMode(false);
         setEditingIndex(null);
+    }, [activeMode, addMode, getMousePosition]);
+
+    // Text area change handler - FIXED!
+    const handleTextareaChange = (e) => {
+        const text = e.target.value;
+        setTextBox(prev => ({
+            ...prev,
+            text: text,
+            width: Math.max(150, text.length * 8 + 40),
+            height: Math.max(40, (text.split('\n').length * 20) + 20)
+        }));
     };
 
-    // Add Text: Button handler
     const handleAddTextButton = () => {
         setAddMode(true);
         setShowTextBox(false);
         setEditingIndex(null);
     };
 
-    // Add Text: Save new textbox
-    const handleTextBoxBlur = () => {
-        if (textBox.text.trim() !== '') {
-            dispatch(addOverlay({
-                pageNumber,
-                overlay: { ...textBox, type: 'addText' }
-            }));
-        }
-        setShowTextBox(false);
-        setAddMode(false);
-    };
-
-    // Add Text: Edit existing textbox
     const handleEditTextBox = (idx) => {
         if (activeMode === 'addText') {
             setEditingIndex(idx);
-            setTextBox(overlays[idx]);
+            setTextBox(overlaysPixels[idx]);
             setShowTextBox(true);
         }
     };
 
-    // Auto-resize textarea based on content
-    const handleTextareaChange = (e, idx) => {
-        const textarea = e.target;
-        const text = e.target.value;
-
-        // If text contains newlines, expand vertically
-        if (text.includes('\n')) {
-            textarea.style.height = 'auto';
-            textarea.style.height = `${textarea.scrollHeight}px`;
-            const newHeight = Math.max(50, textarea.scrollHeight);
-            setTextBox(prev => ({
-                ...prev,
-                text: text,
-                height: newHeight
-            }));
-        } else {
-            // Otherwise, expand horizontally
-            const newWidth = Math.max(120, text.length * 8); // Approximate width based on character count
-            setTextBox(prev => ({
-                ...prev,
-                text: text,
-                width: newWidth
-            }));
-        }
-    };
-
-    // Keyboard save for textarea
-    const handleTextBoxKeyDown = (e, idx) => {
-        if (e.key === 'Enter' && !e.shiftKey) {
-            e.preventDefault();
-            // When Enter is pressed, switch to vertical expansion
-            const textarea = e.target;
-            textarea.style.height = 'auto';
-            textarea.style.height = `${textarea.scrollHeight}px`;
-            const newHeight = Math.max(50, textarea.scrollHeight);
-            setTextBox(prev => ({
-                ...prev,
-                height: newHeight
-            }));
-
-            if (editingIndex === null) {
-                handleTextBoxBlur();
-            } else {
-                handleEditTextBox(idx);
-            }
-        }
-    };
-
-    // Save textbox with current height
-    const handleSaveTextBox = (idx) => {
-        if (textBox.text.trim() !== '') {
-            dispatch(updateOverlay({
-                pageNumber,
-                index: idx,
-                overlay: { ...textBox, type: 'addText' }
-            }));
-        }
-        setShowTextBox(false);
-        setEditingIndex(null);
-    };
-
-    // Mouse position helper
-    const getMousePosition = (e) => {
-        const canvas = canvasRef.current;
-        const rect = canvas.getBoundingClientRect();
-        return {
-            x: e.clientX - rect.left,
-            y: e.clientY - rect.top
-        };
-    };
-
-    // Drawing logic for blur/erase
-    const handleMouseDown = (e) => {
-        if (!activeMode || activeMode === 'addText') return;
-        setIsDrawing(true);
-        const pos = getMousePosition(e);
-        setStartPos({ x: pos.x, y: pos.y, currentX: pos.x, currentY: pos.y });
-    };
-
-    const handleCanvasMouseMove = (e) => {
-        if (!isDrawing || !activeMode || activeMode === 'addText') return;
-        const currentPos = getMousePosition(e);
-        setStartPos(prev => ({ ...prev, currentX: currentPos.x, currentY: currentPos.y }));
-    };
-
-    const handleMouseUp = (e) => {
-        if (!isDrawing || !activeMode || activeMode === 'addText') return;
-        setIsDrawing(false);
-        const endPos = getMousePosition(e);
-        const width = endPos.x - startPos.x;
-        const height = endPos.y - startPos.y;
-
-        // Only add overlay if there's actual area selected
-        if (Math.abs(width) > 5 && Math.abs(height) > 5) {
-            dispatch(addOverlay({
-                pageNumber,
-                overlay: {
-                    type: activeMode,
-                    x: width < 0 ? endPos.x : startPos.x,
-                    y: height < 0 ? endPos.y : startPos.y,
-                    width: Math.abs(width),
-                    height: Math.abs(height),
-                }
-            }));
-        }
-    };
-
-    // Rnd drag handler
-    const handleRndDragStop = (e, d, idx) => {
-        if (editingIndex === idx) {
-            setTextBox(prev => ({ ...prev, x: d.x, y: d.y }));
-        } else {
-            dispatch(updateOverlay({
-                pageNumber,
-                index: idx,
-                overlay: { ...overlays[idx], x: d.x, y: d.y }
-            }));
-        }
-    };
-
-    // Rnd resize handler
-    const handleRndResizeStop = (e, direction, ref, delta, position, idx) => {
-        if (editingIndex === idx) {
-            setTextBox(prev => ({
-                ...prev,
-                width: parseInt(ref.style.width, 10),
-                height: parseInt(ref.style.height, 10),
-                x: position.x,
-                y: position.y
-            }));
-        } else {
-            dispatch(updateOverlay({
-                pageNumber,
-                index: idx,
-                overlay: {
-                    ...overlays[idx],
-                    width: parseInt(ref.style.width, 10),
-                    height: parseInt(ref.style.height, 10),
-                    x: position.x,
-                    y: position.y
-                }
-            }));
-        }
-    };
-
-    // Delete textbox
     const handleDeleteTextBox = (idx) => {
         dispatch(removeOverlay({ pageNumber, index: idx }));
     };
 
+    const handleTextBoxSave = useCallback(() => {
+        if (textBox.text.trim() && pdfDimensions) {
+            dispatch(addOverlay({
+                pageNumber,
+                overlay: { ...textBox, type: 'addText' },
+                pdfDimensions
+            }));
+        }
+        setShowTextBox(false);
+        setAddMode(false);
+    }, [textBox, pageNumber, pdfDimensions, dispatch]);
+
+    const handleUpdateTextBox = useCallback((idx) => {
+        if (textBox.text.trim() && pdfDimensions) {
+            dispatch(updateOverlay({
+                pageNumber,
+                index: idx,
+                overlay: { ...textBox, type: 'addText' },
+                pdfDimensions
+            }));
+        }
+        setShowTextBox(false);
+        setEditingIndex(null);
+    }, [textBox, pageNumber, pdfDimensions, dispatch]);
+
+    const handleRndDragStop = (e, d, idx) => {
+        if (!pdfDimensions) return;
+
+        const updatedOverlay = { ...overlaysPixels[idx], x: d.x, y: d.y };
+        dispatch(updateOverlay({
+            pageNumber,
+            index: idx,
+            overlay: updatedOverlay,
+            pdfDimensions
+        }));
+    };
+
+    const handleRndResizeStop = (e, direction, ref, delta, position, idx) => {
+        if (!pdfDimensions) return;
+
+        const updatedOverlay = {
+            ...overlaysPixels[idx],
+            width: parseInt(ref.style.width, 10),
+            height: parseInt(ref.style.height, 10),
+            x: position.x,
+            y: position.y
+        };
+
+        dispatch(updateOverlay({
+            pageNumber,
+            index: idx,
+            overlay: updatedOverlay,
+            pdfDimensions
+        }));
+    };
+
     return (
-        <>
-            <div style={{ position: 'absolute', top: 10, left: 10, zIndex: 20, display: 'flex', gap: '10px' }}>
+        <div
+            ref={containerRef}
+            style={{
+                position: 'absolute',
+                top: 0,
+                left: 0,
+                width: '100%',
+                height: '100%',
+                pointerEvents: activeMode === 'view' ? 'none' : 'auto'
+            }}
+        >
+            {/* Clean toolbar */}
+            <div style={{
+                position: 'absolute',
+                top: -50,
+                left: 0,
+                zIndex: 20,
+                display: 'flex',
+                gap: '8px',
+                flexWrap: 'wrap'
+            }}>
                 {activeMode === 'addText' && (
                     <button
                         onClick={handleAddTextButton}
                         style={{
-                            background: addMode ? '#4CAF50' : '#007bff',
+                            background: addMode ? '#4CAF50' : '#2196F3',
                             color: 'white',
                             border: 'none',
-                            padding: '5px 10px',
-                            borderRadius: '4px',
-                            cursor: 'pointer'
+                            padding: '6px 12px',
+                            borderRadius: '6px',
+                            cursor: 'pointer',
+                            fontSize: '12px',
+                            fontWeight: '500',
+                            boxShadow: '0 2px 4px rgba(0,0,0,0.1)'
                         }}
                     >
-                        {addMode ? 'Click to Add Text' : 'Add Text'}
+                        {addMode ? '📝 Click to Add Text' : '➕ Add Text'}
                     </button>
                 )}
+
                 <button
                     onClick={() => dispatch(undo())}
                     style={{
                         background: '#6c757d',
                         color: 'white',
                         border: 'none',
-                        padding: '5px 10px',
-                        borderRadius: '4px',
-                        cursor: 'pointer'
+                        padding: '6px 12px',
+                        borderRadius: '6px',
+                        cursor: 'pointer',
+                        fontSize: '12px',
+                        fontWeight: '500',
+                        boxShadow: '0 2px 4px rgba(0,0,0,0.1)'
                     }}
                 >
-                    Back
+                    ↶ Undo
                 </button>
                 <button
                     onClick={() => dispatch(redo())}
@@ -406,246 +446,274 @@ const PdfCanvasOverlay = ({ pageNumber, activeMode, pdfFile, onCanvasSizeChange 
                         background: '#6c757d',
                         color: 'white',
                         border: 'none',
-                        padding: '5px 10px',
-                        borderRadius: '4px',
-                        cursor: 'pointer'
+                        padding: '6px 12px',
+                        borderRadius: '6px',
+                        cursor: 'pointer',
+                        fontSize: '12px',
+                        fontWeight: '500',
+                        boxShadow: '0 2px 4px rgba(0,0,0,0.1)'
                     }}
                 >
-                    Next
+                    ↷ Redo
                 </button>
             </div>
+
+            {/* Canvas layers */}
             <canvas ref={blurCanvasRef} />
             <canvas
                 ref={canvasRef}
                 onMouseDown={handleMouseDown}
-                onMouseMove={handleCanvasMouseMove}
+                onMouseMove={handleMouseMove}
                 onMouseUp={handleMouseUp}
                 onClick={handleCanvasClick}
             />
-            {/* Render all textboxes as overlays, always visible, only interactive in text mode */}
-            {overlays.map((action, idx) => (
+
+            {/* Text overlays */}
+            {overlaysPixels.map((action, idx) => (
                 action.type === 'addText' && (
-                    activeMode === 'addText' ? (
-                        <Rnd
-                            key={idx}
-                            size={{ width: action.width, height: action.height }}
-                            position={{ x: action.x, y: action.y }}
-                            enableResizing={editingIndex !== idx}
-                            disableDragging={false}
-                            onDragStop={(e, d) => handleRndDragStop(e, d, idx)}
-                            onResizeStop={(e, direction, ref, delta, position) => handleRndResizeStop(e, direction, ref, delta, position, idx)}
-                            bounds="parent"
-                            style={{
-                                zIndex: 10,
-                                background: 'rgba(255,255,255,0.8)',
-                                border: '1px solid #888',
-                                display: 'flex',
-                                alignItems: 'center',
-                                pointerEvents: 'auto',
-                            }}
-                        >
-                            {editingIndex === idx ? (
-                                <div style={{ width: '100%', position: 'relative' }}>
-                                    <div style={{ display: 'flex', gap: 8, marginBottom: 4 }}>
-                                        <select value={textBox.fontFamily || 'Roboto'} onChange={e => setTextBox(prev => ({ ...prev, fontFamily: e.target.value }))}>
-                                            {FONT_FAMILIES.map(f => <option key={f} value={f}>{f}</option>)}
-                                        </select>
-                                        <select value={textBox.fontWeight || 'Regular'} onChange={e => setTextBox(prev => ({ ...prev, fontWeight: e.target.value }))}>
-                                            {FONT_WEIGHTS.map(w => <option key={w} value={w}>{w}</option>)}
-                                        </select>
-                                        <select value={textBox.fontStyle || 'normal'} onChange={e => setTextBox(prev => ({ ...prev, fontStyle: e.target.value }))}>
-                                            {FONT_STYLES.map(s => <option key={s} value={s}>{s}</option>)}
-                                        </select>
-                                        <select value={textBox.fontSize || 16} onChange={e => setTextBox(prev => ({ ...prev, fontSize: Number(e.target.value) }))}>
-                                            {FONT_SIZES.map(s => <option key={s} value={s}>{s}px</option>)}
-                                        </select>
+                    <div key={idx}>
+                        {activeMode === 'addText' ? (
+                            <Rnd
+                                size={{ width: action.width, height: action.height }}
+                                position={{ x: action.x, y: action.y }}
+                                enableResizing={editingIndex !== idx}
+                                disableDragging={false}
+                                onDragStop={(e, d) => handleRndDragStop(e, d, idx)}
+                                onResizeStop={(e, direction, ref, delta, position) =>
+                                    handleRndResizeStop(e, direction, ref, delta, position, idx)
+                                }
+                                bounds="parent"
+                                style={{
+                                    zIndex: 15,
+                                    background: 'rgba(255,255,255,0.9)',
+                                    border: '2px solid #2196F3',
+                                    borderRadius: '4px',
+                                    boxShadow: '0 2px 8px rgba(0,0,0,0.15)',
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    pointerEvents: 'auto',
+                                }}
+                            >
+                                {editingIndex === idx ? (
+                                    <div style={{ width: '100%', position: 'relative', padding: '4px' }}>
+                                        <div style={{ display: 'flex', gap: 4, marginBottom: 4, flexWrap: 'wrap' }}>
+                                            <select
+                                                value={textBox.fontFamily || 'Roboto'}
+                                                onChange={e => setTextBox(prev => ({ ...prev, fontFamily: e.target.value }))}
+                                                style={{ fontSize: '10px', padding: '2px' }}
+                                            >
+                                                {FONT_FAMILIES.map(f => <option key={f} value={f}>{f}</option>)}
+                                            </select>
+                                            <select
+                                                value={textBox.fontSize || 16}
+                                                onChange={e => setTextBox(prev => ({ ...prev, fontSize: Number(e.target.value) }))}
+                                                style={{ fontSize: '10px', padding: '2px' }}
+                                            >
+                                                {FONT_SIZES.map(s => <option key={s} value={s}>{s}px</option>)}
+                                            </select>
+                                        </div>
+                                        <textarea
+                                            style={{
+                                                width: '100%',
+                                                minHeight: '30px',
+                                                border: 'none',
+                                                background: 'transparent',
+                                                resize: 'none',
+                                                outline: 'none',
+                                                fontSize: textBox.fontSize || 16,
+                                                fontFamily: textBox.fontFamily || 'Roboto',
+                                                padding: '2px',
+                                            }}
+                                            value={textBox.text}
+                                            autoFocus
+                                            onChange={handleTextareaChange}
+                                            onKeyDown={e => {
+                                                if (e.key === 'Enter' && !e.shiftKey) {
+                                                    e.preventDefault();
+                                                    handleUpdateTextBox(idx);
+                                                }
+                                            }}
+                                        />
+                                        <button
+                                            style={{
+                                                position: 'absolute',
+                                                top: 2,
+                                                right: 2,
+                                                background: '#4CAF50',
+                                                color: 'white',
+                                                border: 'none',
+                                                borderRadius: '3px',
+                                                cursor: 'pointer',
+                                                fontSize: '12px',
+                                                padding: '2px 4px'
+                                            }}
+                                            onClick={() => handleUpdateTextBox(idx)}
+                                        >
+                                            ✓
+                                        </button>
                                     </div>
-                                    <textarea
-                                        style={{
+                                ) : (
+                                    <>
+                                        <span style={{
+                                            padding: '4px 30px 4px 4px',
                                             width: '100%',
-                                            minHeight: '50px',
-                                            border: 'none',
-                                            background: 'transparent',
-                                            resize: 'none',
-                                            outline: 'none',
-                                            fontSize: textBox.fontSize || 16,
-                                            fontFamily: textBox.fontFamily || 'Roboto',
-                                            fontWeight: textBox.fontWeight || 'Regular',
-                                            fontStyle: textBox.fontStyle || 'normal',
-                                            padding: '4px 40px 4px 4px',
-                                            overflow: 'hidden',
-                                            whiteSpace: 'nowrap'
-                                        }}
-                                        value={textBox.text}
-                                        autoFocus
-                                        onChange={e => handleTextareaChange(e, idx)}
-                                        onKeyDown={e => handleTextBoxKeyDown(e, idx)}
-                                        onMouseDown={e => e.stopPropagation()}
-                                    />
-                                    <button
-                                        style={{
-                                            position: 'absolute',
-                                            top: 4,
-                                            right: 4,
-                                            zIndex: 11,
-                                            background: 'transparent',
-                                            border: 'none',
-                                            cursor: 'pointer',
-                                            color: '#28a745',
-                                            fontWeight: 'bold'
-                                        }}
-                                        onClick={() => handleSaveTextBox(idx)}
-                                        title="Save changes"
-                                    >
-                                        ✓
-                                    </button>
-                                </div>
-                            ) : (
-                                <>
-                                    <span style={{
-                                        padding: '4px 40px 4px 4px',
-                                        width: '100%',
-                                        height: '100%',
-                                        wordBreak: 'break-word',
-                                        fontSize: action.fontSize || 16,
-                                        fontFamily: action.fontFamily || 'Roboto',
-                                        fontWeight: action.fontWeight || 'Regular',
-                                        fontStyle: action.fontStyle || 'normal',
-                                        display: 'block',
-                                        minHeight: '50px',
-                                        whiteSpace: 'pre-wrap',
-                                        overflowWrap: 'break-word',
-                                    }}>{action.text}</span>
-                                    <button
-                                        style={{ position: 'absolute', top: 4, right: 4, zIndex: 11, background: 'transparent', border: 'none', cursor: 'pointer', color: '#c00', fontWeight: 'bold' }}
-                                        onClick={() => handleDeleteTextBox(idx)}
-                                        title="Delete textbox"
-                                    >
-                                        🗑️
-                                    </button>
-                                    <button
-                                        style={{ position: 'absolute', top: 4, right: 34, zIndex: 11, background: 'transparent', border: 'none', cursor: 'pointer', color: '#007bff', fontWeight: 'bold' }}
-                                        onClick={() => handleEditTextBox(idx)}
-                                        title="Edit textbox"
-                                    >
-                                        ✏️
-                                    </button>
-                                </>
-                            )}
-                        </Rnd>
-                    ) : (
-                        <span
-                            key={idx}
-                            style={{
-                                position: 'absolute',
-                                top: action.y,
-                                left: action.x,
-                                width: action.width,
-                                height: action.height,
-                                zIndex: 10,
-                                fontSize: action.fontSize || 16,
-                                fontFamily: action.fontFamily || 'Roboto',
-                                fontWeight: action.fontWeight || 'Regular',
-                                fontStyle: action.fontStyle || 'normal',
-                                background: 'transparent',
-                                color: '#222',
-                                pointerEvents: 'none',
-                                wordBreak: 'break-word',
-                                overflowWrap: 'break-word',
-                                whiteSpace: 'pre-wrap',
-                                display: 'block',
-                                minHeight: '50px',
-                            }}
-                        >
-                            {action.text}
-                        </span>
-                    )
+                                            fontSize: action.fontSize || 16,
+                                            fontFamily: action.fontFamily || 'Roboto',
+                                            whiteSpace: 'pre-wrap',
+                                            wordBreak: 'break-word'
+                                        }}>
+                                            {action.text}
+                                        </span>
+                                        <button
+                                            style={{
+                                                position: 'absolute',
+                                                top: 2,
+                                                right: 2,
+                                                background: '#f44336',
+                                                color: 'white',
+                                                border: 'none',
+                                                borderRadius: '3px',
+                                                cursor: 'pointer',
+                                                fontSize: '10px',
+                                                padding: '1px 3px'
+                                            }}
+                                            onClick={() => handleDeleteTextBox(idx)}
+                                        >
+                                            ✕
+                                        </button>
+                                        <button
+                                            style={{
+                                                position: 'absolute',
+                                                top: 2,
+                                                right: 22,
+                                                background: '#2196F3',
+                                                color: 'white',
+                                                border: 'none',
+                                                borderRadius: '3px',
+                                                cursor: 'pointer',
+                                                fontSize: '10px',
+                                                padding: '1px 3px'
+                                            }}
+                                            onClick={() => handleEditTextBox(idx)}
+                                        >
+                                            ✏
+                                        </button>
+                                    </>
+                                )}
+                            </Rnd>
+                        ) : (
+                            <div
+                                style={{
+                                    position: 'absolute',
+                                    top: action.y,
+                                    left: action.x,
+                                    width: action.width,
+                                    height: action.height,
+                                    fontSize: action.fontSize || 16,
+                                    fontFamily: action.fontFamily || 'Roboto',
+                                    color: '#000',
+                                    pointerEvents: 'none',
+                                    whiteSpace: 'pre-wrap',
+                                    wordBreak: 'break-word',
+                                    zIndex: 12,
+                                    padding: '2px'
+                                }}
+                            >
+                                {action.text}
+                            </div>
+                        )}
+                    </div>
                 )
             ))}
-            {/* New textbox overlay */}
+
+            {/* New text box */}
             {showTextBox && editingIndex === null && (
                 <Rnd
                     size={{ width: textBox.width, height: textBox.height }}
                     position={{ x: textBox.x, y: textBox.y }}
-                    enableResizing={false}
-                    disableDragging={activeMode !== 'addText'}
-                    onDragStop={(e, d) => setTextBox({ ...textBox, x: d.x, y: d.y })}
-                    onResizeStop={(e, direction, ref, delta, position) => setTextBox({
-                        ...textBox,
-                        width: parseInt(ref.style.width, 10),
-                        height: parseInt(ref.style.height, 10),
-                        x: position.x,
-                        y: position.y
-                    })}
+                    enableResizing={true}
+                    onDragStop={(e, d) => setTextBox(prev => ({ ...prev, x: d.x, y: d.y }))}
+                    onResizeStop={(e, direction, ref, delta, position) =>
+                        setTextBox(prev => ({
+                            ...prev,
+                            width: parseInt(ref.style.width, 10),
+                            height: parseInt(ref.style.height, 10),
+                            x: position.x,
+                            y: position.y
+                        }))
+                    }
                     bounds="parent"
                     style={{
-                        zIndex: 10,
-                        background: 'rgba(255,255,255,0.8)',
-                        border: '1px solid #888',
-                        display: 'flex',
-                        alignItems: 'center',
-                        pointerEvents: activeMode === 'addText' ? 'auto' : 'none',
+                        zIndex: 15,
+                        background: 'rgba(255,255,255,0.95)',
+                        border: '2px solid #4CAF50',
+                        borderRadius: '4px',
+                        boxShadow: '0 2px 8px rgba(0,0,0,0.15)',
+                        pointerEvents: 'auto',
                     }}
                 >
-                    <div style={{ width: '100%', position: 'relative' }}>
-                        <div style={{ display: 'flex', gap: 8, marginBottom: 4 }}>
-                            <select value={textBox.fontFamily || 'Roboto'} onChange={e => setTextBox(prev => ({ ...prev, fontFamily: e.target.value }))}>
+                    <div style={{ width: '100%', position: 'relative', padding: '4px' }}>
+                        <div style={{ display: 'flex', gap: 4, marginBottom: 4, flexWrap: 'wrap' }}>
+                            <select
+                                value={textBox.fontFamily || 'Roboto'}
+                                onChange={e => setTextBox(prev => ({ ...prev, fontFamily: e.target.value }))}
+                                style={{ fontSize: '10px', padding: '2px' }}
+                            >
                                 {FONT_FAMILIES.map(f => <option key={f} value={f}>{f}</option>)}
                             </select>
-                            <select value={textBox.fontWeight || 'Regular'} onChange={e => setTextBox(prev => ({ ...prev, fontWeight: e.target.value }))}>
-                                {FONT_WEIGHTS.map(w => <option key={w} value={w}>{w}</option>)}
-                            </select>
-                            <select value={textBox.fontStyle || 'normal'} onChange={e => setTextBox(prev => ({ ...prev, fontStyle: e.target.value }))}>
-                                {FONT_STYLES.map(s => <option key={s} value={s}>{s}</option>)}
-                            </select>
-                            <select value={textBox.fontSize || 16} onChange={e => setTextBox(prev => ({ ...prev, fontSize: Number(e.target.value) }))}>
+                            <select
+                                value={textBox.fontSize || 16}
+                                onChange={e => setTextBox(prev => ({ ...prev, fontSize: Number(e.target.value) }))}
+                                style={{ fontSize: '10px', padding: '2px' }}
+                            >
                                 {FONT_SIZES.map(s => <option key={s} value={s}>{s}px</option>)}
                             </select>
                         </div>
                         <textarea
                             style={{
                                 width: '100%',
-                                minHeight: '50px',
+                                minHeight: '30px',
                                 border: 'none',
                                 background: 'transparent',
                                 resize: 'none',
                                 outline: 'none',
                                 fontSize: textBox.fontSize || 16,
                                 fontFamily: textBox.fontFamily || 'Roboto',
-                                fontWeight: textBox.fontWeight || 'Regular',
-                                fontStyle: textBox.fontStyle || 'normal',
-                                padding: '4px 40px 4px 4px',
-                                overflow: 'hidden',
-                                whiteSpace: 'nowrap'
+                                padding: '2px',
                             }}
                             value={textBox.text}
                             autoFocus
-                            onChange={e => handleTextareaChange(e, null)}
-                            onKeyDown={e => handleTextBoxKeyDown(e, null)}
-                            onMouseDown={e => e.stopPropagation()}
+                            onChange={handleTextareaChange}
+                            onKeyDown={e => {
+                                if (e.key === 'Enter' && !e.shiftKey) {
+                                    e.preventDefault();
+                                    handleTextBoxSave();
+                                }
+                            }}
+                            placeholder="Enter text..."
                         />
                         <button
                             style={{
                                 position: 'absolute',
-                                top: 4,
-                                right: 4,
-                                zIndex: 11,
-                                background: 'transparent',
+                                top: 2,
+                                right: 2,
+                                background: '#4CAF50',
+                                color: 'white',
                                 border: 'none',
+                                borderRadius: '3px',
                                 cursor: 'pointer',
-                                color: '#28a745',
-                                fontWeight: 'bold'
+                                fontSize: '12px',
+                                padding: '2px 4px'
                             }}
-                            onClick={handleTextBoxBlur}
-                            title="Save textbox"
+                            onClick={handleTextBoxSave}
                         >
                             ✓
                         </button>
                     </div>
                 </Rnd>
             )}
-        </>
+        </div>
     );
 };
 
-export default PdfCanvasOverlay; 
+export default ResponsivePdfCanvasOverlay;

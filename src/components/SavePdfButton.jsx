@@ -1,8 +1,9 @@
 import React from 'react';
-import { Button } from '@mui/material';
+import { Button, CircularProgress } from '@mui/material';
 import { PDFDocument, rgb } from 'pdf-lib';
-import { pdfjs } from 'react-pdf'; // pdfjs-dist is already used in the project
+import { pdfjs } from 'react-pdf';
 import fontkit from '@pdf-lib/fontkit';
+
 // Map fontFamily/fontWeight to PDF standard fonts
 function getPDFFont(pdfDoc, fontFamily, fontWeight) {
     const fam = (fontFamily || '').toLowerCase();
@@ -16,7 +17,7 @@ function getPDFFont(pdfDoc, fontFamily, fontWeight) {
     return fontWeight === 'bold' ? pdfDoc.embedStandardFont('Helvetica-Bold') : pdfDoc.embedStandardFont('Helvetica');
 }
 
-// Helper: word wrap a string to fit a max width using a PDF font
+// Helper: word wrap text to fit within a maximum width
 function wrapTextToWidth(text, font, fontSize, maxWidth) {
     const lines = [];
     for (const rawLine of text.split('\n')) {
@@ -31,12 +32,12 @@ function wrapTextToWidth(text, font, fontSize, maxWidth) {
                 line = testLine;
             }
         }
-        lines.push(line);
+        if (line) lines.push(line);
     }
     return lines;
 }
 
-// Supported font families for your project
+// Supported font families for the project
 const SUPPORTED_FONTS = [
     'AmaticSC', 'Lato', 'Norwester', 'OpenSans', 'Oswald', 'Poppins', 'Roboto', 'RobotoCondensed', 'SourceSansPro'
 ];
@@ -44,19 +45,25 @@ const SUPPORTED_FONTS = [
 function getFontFileName(fontFamily, fontWeight = 'Regular', fontStyle = 'normal') {
     let fam = fontFamily ? fontFamily.replace(/ /g, '') : 'Roboto';
     if (!SUPPORTED_FONTS.includes(fam)) fam = 'Roboto';
+
     let weight = fontWeight.charAt(0).toUpperCase() + fontWeight.slice(1);
     if (weight === 'Normal') weight = 'Regular';
     if (weight === 'SemiBold') weight = 'Semibold';
-    if (weight === 'ExtraBold') weight = 'ExtraBold';
-    if (weight === 'Black') weight = 'Black';
+
     let style = '';
     if (fontStyle === 'italic' || fontStyle === 'oblique') style = 'Italic';
-    let fileName = `${fam}-${weight}${style}.ttf`;
-    return fileName;
+
+    return `${fam}-${weight}${style}.ttf`;
 }
 
-const SavePdfButton = ({ pdfFile, editActions, renderedCanvasSize }) => {
+const ResponsiveSavePdfButton = ({ pdfFile, editActions, pdfDimensions }) => {
+    const [saving, setSaving] = React.useState(false);
+
     const handleSave = async () => {
+        if (!pdfFile || !editActions.length) return;
+
+        setSaving(true);
+
         try {
             const arrayBuffer = await pdfFile.arrayBuffer();
             const pdfDoc = await PDFDocument.load(arrayBuffer);
@@ -66,159 +73,214 @@ const SavePdfButton = ({ pdfFile, editActions, renderedCanvasSize }) => {
             // Group overlays by page
             const overlaysByPage = {};
             editActions.forEach(action => {
-                if (!overlaysByPage[action.pageNumber]) overlaysByPage[action.pageNumber] = [];
+                if (!overlaysByPage[action.pageNumber]) {
+                    overlaysByPage[action.pageNumber] = [];
+                }
                 overlaysByPage[action.pageNumber].push(action);
             });
 
-            // For each page, process overlays
             const fontCache = {};
+
+            // Process each page
             for (const [pageNumStr, actions] of Object.entries(overlaysByPage)) {
                 const pageNumber = Number(pageNumStr);
                 const page = pages[pageNumber - 1];
+                if (!page) continue;
+
                 const { width: pdfWidth, height: pdfHeight } = page.getSize();
 
-                // Use the rendered canvas size for this page
-                const { width: renderedWidth, height: renderedHeight } = renderedCanvasSize || {};
-                const scaleX = pdfWidth / renderedWidth;
-                const scaleY = pdfHeight / renderedHeight;
-
-                // Find if there are any blur overlays
+                // Handle blur overlays first (require canvas rendering)
                 const blurActions = actions.filter(a => a.type === 'blur');
                 if (blurActions.length > 0) {
-                    // Render the page to a canvas using pdfjs-dist
-                    const loadingTask = pdfjs.getDocument({ data: arrayBuffer });
-                    const pdf = await loadingTask.promise;
-                    const pdfPage = await pdf.getPage(pageNumber);
-                    // Render at 2x for better quality
-                    const viewport = pdfPage.getViewport({ scale: 2 });
-                    const canvas = document.createElement('canvas');
-                    canvas.width = viewport.width;
-                    canvas.height = viewport.height;
-                    const ctx = canvas.getContext('2d');
-                    await pdfPage.render({ canvasContext: ctx, viewport }).promise;
+                    try {
+                        // Render the page to canvas using pdfjs
+                        const loadingTask = pdfjs.getDocument({ data: arrayBuffer });
+                        const pdf = await loadingTask.promise;
+                        const pdfPage = await pdf.getPage(pageNumber);
 
-                    for (const blur of blurActions) {
-                        // Use overlay coordinates directly for extraction from rendered canvas
-                        // Map overlay coordinates to the rendered canvas (not scaled)
-                        const scaleCanvasX = canvas.width / renderedWidth;
-                        const scaleCanvasY = canvas.height / renderedHeight;
-                        const x = blur.x * scaleCanvasX;
-                        const y = blur.y * scaleCanvasY;
-                        const w = blur.width * scaleCanvasX;
-                        const h = blur.height * scaleCanvasY;
+                        // Render at high resolution for better quality
+                        const scale = 2;
+                        const viewport = pdfPage.getViewport({ scale });
 
-                        // Extract the area to a temp canvas
-                        const blurCanvas = document.createElement('canvas');
-                        blurCanvas.width = w;
-                        blurCanvas.height = h;
-                        const blurCtx = blurCanvas.getContext('2d');
-                        blurCtx.drawImage(canvas, x, y, w, h, 0, 0, w, h);
-                        // Apply blur filter
-                        blurCtx.filter = 'blur(8px)';
-                        blurCtx.drawImage(blurCanvas, 0, 0);
+                        const canvas = document.createElement('canvas');
+                        canvas.width = viewport.width;
+                        canvas.height = viewport.height;
+                        const ctx = canvas.getContext('2d');
 
-                        // Convert blurred area to image
-                        const imgDataUrl = blurCanvas.toDataURL('image/png');
-                        const imgBytes = await fetch(imgDataUrl).then(res => res.arrayBuffer());
-                        const img = await pdfDoc.embedPng(imgBytes);
+                        await pdfPage.render({ canvasContext: ctx, viewport }).promise;
 
-                        // Convert overlay coordinates to PDF points for placement
-                        const pdfX = blur.x * scaleX;
-                        const pdfY = blur.y * scaleY;
-                        const pdfW = blur.width * scaleX;
-                        const pdfH = blur.height * scaleY;
+                        // Process each blur area
+                        for (const blur of blurActions) {
+                            // Convert percentage coordinates to canvas coordinates
+                            const canvasX = blur.x * viewport.width;
+                            const canvasY = blur.y * viewport.height;
+                            const canvasW = blur.width * viewport.width;
+                            const canvasH = blur.height * viewport.height;
 
-                        // Draw the blurred image on the PDF page
-                        page.drawImage(img, {
-                            x: pdfX,
-                            y: pdfHeight - pdfY - pdfH,
-                            width: pdfW,
-                            height: pdfH,
-                        });
+                            // Create blur effect
+                            const blurCanvas = document.createElement('canvas');
+                            blurCanvas.width = canvasW;
+                            blurCanvas.height = canvasH;
+                            const blurCtx = blurCanvas.getContext('2d');
+
+                            // Extract area to blur
+                            blurCtx.drawImage(canvas, canvasX, canvasY, canvasW, canvasH, 0, 0, canvasW, canvasH);
+
+                            // Apply blur
+                            blurCtx.filter = 'blur(12px)';
+                            blurCtx.drawImage(blurCanvas, 0, 0);
+
+                            // Convert to image and embed in PDF
+                            const imgDataUrl = blurCanvas.toDataURL('image/png');
+                            const imgBytes = await fetch(imgDataUrl).then(res => res.arrayBuffer());
+                            const img = await pdfDoc.embedPng(imgBytes);
+
+                            // Convert percentage coordinates to PDF coordinates
+                            const pdfX = blur.x * pdfWidth;
+                            const pdfY = blur.y * pdfHeight;
+                            const pdfW = blur.width * pdfWidth;
+                            const pdfH = blur.height * pdfHeight;
+
+                            // Draw blurred image on PDF (note: PDF coordinates are bottom-up)
+                            page.drawImage(img, {
+                                x: pdfX,
+                                y: pdfHeight - pdfY - pdfH,
+                                width: pdfW,
+                                height: pdfH,
+                            });
+                        }
+                    } catch (error) {
+                        console.warn('Error processing blur effect:', error);
                     }
                 }
 
-                // Draw erase and text overlays as before, using correct scaling
+                // Process erase and text overlays
                 for (const action of actions) {
-                    const pdfX = (action.x * scaleX) * 0.93;
-                    const pdfY = action.y * scaleY;
-                    const pdfW = action.width * scaleX;
-                    const pdfH = action.height * scaleY;
                     if (action.type === 'erase') {
+                        // Convert percentage coordinates to PDF coordinates
+                        const pdfX = action.x * pdfWidth;
+                        const pdfY = action.y * pdfHeight;
+                        const pdfW = action.width * pdfWidth;
+                        const pdfH = action.height * pdfHeight;
+
                         page.drawRectangle({
                             x: pdfX,
-                            y: pdfHeight - pdfY - pdfH,
+                            y: pdfHeight - pdfY - pdfH, // PDF coordinates are bottom-up
                             width: pdfW,
                             height: pdfH,
-                            color: rgb(1, 1, 1),
+                            color: rgb(1, 1, 1), // White color for erase
                         });
                     } else if (action.type === 'addText') {
-                        const fontSize = (action.fontSize || 16) * 0.6;
+                        // Handle text overlay
+                        const pdfX = action.x * pdfWidth;
+                        const pdfY = action.y * pdfHeight;
+                        const pdfW = action.width * pdfWidth;
+                        const pdfH = action.height * pdfHeight;
+
+                        // Calculate responsive font size
+                        let fontSize;
+                        if (action.fontSizePercentage) {
+                            fontSize = action.fontSizePercentage * pdfHeight;
+                        } else {
+                            fontSize = (action.fontSize || 16) * (pdfHeight / 842); // Normalize to A4 height
+                        }
+                        fontSize = Math.max(8, Math.min(fontSize, 72)); // Clamp between 8 and 72pt
+
+                        // Get font
                         const fontFamily = action.fontFamily || 'Roboto';
                         const fontWeight = action.fontWeight || 'Regular';
                         const fontStyle = action.fontStyle || 'normal';
                         const fontFileName = getFontFileName(fontFamily, fontWeight, fontStyle);
                         const fontKey = fontFileName;
+
                         if (!fontCache[fontKey]) {
                             try {
-                                // eslint-disable-next-line no-await-in-loop
                                 const fontBytes = await fetch(`/fonts/${fontFileName}`).then(res => res.arrayBuffer());
-                                // eslint-disable-next-line no-await-in-loop
                                 fontCache[fontKey] = await pdfDoc.embedFont(fontBytes);
                             } catch (e) {
-                                // fallback to Roboto-Regular.ttf if not found
-                                if (!fontCache['Roboto-Regular.ttf']) {
-                                    const fallbackBytes = await fetch('/fonts/Roboto-Regular.ttf').then(res => res.arrayBuffer());
-                                    fontCache['Roboto-Regular.ttf'] = await pdfDoc.embedFont(fallbackBytes);
-                                }
-                                fontCache[fontKey] = fontCache['Roboto-Regular.ttf'];
+                                // Fallback to standard fonts
+                                console.warn(`Font ${fontFileName} not found, using fallback`);
+                                fontCache[fontKey] = await getPDFFont(pdfDoc, fontFamily, fontWeight);
                             }
                         }
+
                         const font = fontCache[fontKey];
-                        // Use font metrics for alignment, fallback if not available
+
+                        // Calculate text positioning
                         let ascent, lineHeight, startY;
-                        if (typeof font.ascentAtSize === 'function' && typeof font.heightAtSize === 'function') {
-                            ascent = font.ascentAtSize(fontSize);
-                            lineHeight = font.heightAtSize(fontSize);
-                        } else {
-                            ascent = fontSize;
+                        try {
+                            ascent = font.ascentAtSize ? font.ascentAtSize(fontSize) : fontSize * 0.8;
+                            lineHeight = font.heightAtSize ? font.heightAtSize(fontSize) : fontSize * 1.2;
+                        } catch (e) {
+                            ascent = fontSize * 0.8;
                             lineHeight = fontSize * 1.2;
                         }
-                        // Increased fudge factor for better alignment
-                        const fudge = fontSize * 0.75;
-                        startY = pdfHeight - pdfY - ascent + fudge;
-                        const wrappedLines = wrapTextToWidth(action.text, font, fontSize, pdfW);
+
+                        startY = pdfHeight - pdfY - ascent;
+
+                        // Word wrap text to fit within the text box
+                        const wrappedLines = wrapTextToWidth(action.text || '', font, fontSize, pdfW);
+
+                        // Draw each line
                         wrappedLines.forEach((line, i) => {
-                            page.drawText(line, {
-                                x: pdfX,
-                                y: startY - i * lineHeight,
-                                size: fontSize,
-                                font,
-                                color: rgb(0, 0, 0),
-                            });
+                            if (line.trim()) {
+                                page.drawText(line, {
+                                    x: pdfX,
+                                    y: startY - (i * lineHeight),
+                                    size: fontSize,
+                                    font,
+                                    color: rgb(0, 0, 0),
+                                });
+                            }
                         });
                     }
                 }
             }
 
+            // Save and download the modified PDF
             const modifiedPdfBytes = await pdfDoc.save();
             const blob = new Blob([modifiedPdfBytes], { type: 'application/pdf' });
             const url = URL.createObjectURL(blob);
+
             const a = document.createElement('a');
             a.href = url;
-            a.download = 'modified.pdf';
+            a.download = `edited-${Date.now()}.pdf`;
+            document.body.appendChild(a);
             a.click();
+            document.body.removeChild(a);
             URL.revokeObjectURL(url);
+
         } catch (error) {
             console.error('Error saving PDF:', error);
+            alert('Error saving PDF. Please try again.');
+        } finally {
+            setSaving(false);
         }
     };
 
+    const canSave = pdfFile && editActions.length > 0;
+
     return (
-        <Button variant="contained" color="primary" onClick={handleSave}>
-            Save PDF
+        <Button
+            variant="contained"
+            onClick={handleSave}
+            disabled={!canSave || saving}
+            startIcon={saving ? <CircularProgress size={20} color="inherit" /> : null}
+            sx={{
+                minWidth: '140px',
+                background: canSave ? 'linear-gradient(45deg, #2196F3 30%, #21CBF3 90%)' : undefined,
+                boxShadow: canSave ? '0 3px 5px 2px rgba(33, 150, 243, .3)' : undefined,
+                '&:hover': {
+                    background: canSave ? 'linear-gradient(45deg, #1976D2 30%, #1DA1F2 90%)' : undefined,
+                },
+                '&:disabled': {
+                    opacity: 0.6
+                }
+            }}
+        >
+            {saving ? 'Saving...' : canSave ? `Save PDF (${editActions.length} edits)` : 'Save PDF'}
         </Button>
     );
 };
 
-export default SavePdfButton; 
+export default ResponsiveSavePdfButton;
