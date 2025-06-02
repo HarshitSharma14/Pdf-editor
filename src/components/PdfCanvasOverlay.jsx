@@ -31,21 +31,11 @@ const ResponsivePdfCanvasOverlay = ({ pageNumber, activeMode, pdfFile, pdfDimens
         height: 40,
         text: '',
         fontSize: 16,
-        fontFamily: 'Roboto',
+        fontFamily: 'Helvetica', // Fixed to standard font
         color: '#000000'
     });
     const [editingIndex, setEditingIndex] = useState(null);
     const [canvasReady, setCanvasReady] = useState(false);
-
-    // Font configuration
-    const FONT_FAMILIES = [
-        'Amatic SC', 'Lato', 'Norwester', 'Open Sans', 'Oswald', 'Poppins', 'Roboto', 'Roboto Condensed', 'Source Sans Pro'
-    ];
-    const FONT_WEIGHTS = [
-        'Thin', 'ExtraLight', 'Light', 'Regular', 'Medium', 'SemiBold', 'Bold', 'ExtraBold', 'Black'
-    ];
-    const FONT_STYLES = ['normal', 'italic'];
-    const FONT_SIZES = [12, 14, 16, 18, 20, 24, 28, 32];
 
     // Store PDF dimensions in Redux when they change
     useEffect(() => {
@@ -67,11 +57,11 @@ const ResponsivePdfCanvasOverlay = ({ pageNumber, activeMode, pdfFile, pdfDimens
     const getCursor = () => {
         switch (activeMode) {
             case 'addText':
-                return 'default'; // Normal cursor in text mode
+                return 'text';
             case 'blur':
-                return 'help'; // Blue question mark cursor for blur
+                return 'crosshair';
             case 'erase':
-                return 'not-allowed'; // Red circle with line through for erase
+                return 'crosshair';
             default:
                 return 'default';
         }
@@ -95,33 +85,32 @@ const ResponsivePdfCanvasOverlay = ({ pageNumber, activeMode, pdfFile, pdfDimens
         const left = Math.round(pdfRect.left - containerRect.left);
         const top = Math.round(pdfRect.top - containerRect.top);
 
-        // Configure both canvases to exactly match PDF
+        // Configure both canvases to exactly match PDF display size
         [canvas, blurCanvas].forEach((c, index) => {
-            c.width = pdfCanvas.width;
-            c.height = pdfCanvas.height;
+            c.width = Math.round(pdfRect.width);
+            c.height = Math.round(pdfRect.height);
             c.style.width = `${Math.round(pdfRect.width)}px`;
             c.style.height = `${Math.round(pdfRect.height)}px`;
             c.style.position = 'absolute';
             c.style.left = `${left}px`;
             c.style.top = `${top}px`;
-            c.style.pointerEvents = index === 0 ? 'auto' : 'none'; // Always allow events on main canvas
+            c.style.pointerEvents = index === 0 ? 'auto' : 'none';
             c.style.zIndex = index === 0 ? '20' : '21';
         });
 
         canvas.style.cursor = getCursor();
-        blurCanvas.style.cursor = 'default'; // Blur canvas should not interfere
+        blurCanvas.style.cursor = 'default';
         setCanvasReady(true);
         return true;
     }, [activeMode]);
 
-    // Setup canvas positioning with minimal updates
+    // Setup canvas positioning
     useEffect(() => {
         let mounted = true;
         let timeoutId;
 
         const setupCanvas = () => {
             if (!mounted) return;
-
             const success = updateCanvasPosition();
             if (!success) {
                 timeoutId = setTimeout(setupCanvas, 100);
@@ -136,7 +125,6 @@ const ResponsivePdfCanvasOverlay = ({ pageNumber, activeMode, pdfFile, pdfDimens
         };
 
         window.addEventListener('resize', handleResize);
-
         return () => {
             mounted = false;
             clearTimeout(timeoutId);
@@ -144,7 +132,7 @@ const ResponsivePdfCanvasOverlay = ({ pageNumber, activeMode, pdfFile, pdfDimens
         };
     }, [updateCanvasPosition, pageNumber, pdfFile]);
 
-    // IMMEDIATE canvas drawing - no debouncing for visual feedback
+    // Canvas drawing
     useEffect(() => {
         if (!canvasReady) return;
 
@@ -158,18 +146,19 @@ const ResponsivePdfCanvasOverlay = ({ pageNumber, activeMode, pdfFile, pdfDimens
 
         if (!pdfCanvas) return;
 
-        // Clear and redraw immediately
         ctx.clearRect(0, 0, canvas.width, canvas.height);
         blurCtx.clearRect(0, 0, blurCanvas.width, blurCanvas.height);
 
-        // Copy PDF to blur canvas
+        // Copy PDF to blur canvas - scale properly
         try {
-            blurCtx.drawImage(pdfCanvas, 0, 0, canvas.width, canvas.height);
+            const scaleX = canvas.width / pdfCanvas.width;
+            const scaleY = canvas.height / pdfCanvas.height;
+            blurCtx.drawImage(pdfCanvas, 0, 0, pdfCanvas.width, pdfCanvas.height, 0, 0, canvas.width, canvas.height);
         } catch (e) {
-            return; // PDF not ready
+            return;
         }
 
-        // Draw all overlays
+        // Draw all overlays using display coordinates directly
         overlaysPixels.forEach((action) => {
             const width = Math.abs(action.width);
             const height = Math.abs(action.height);
@@ -177,20 +166,27 @@ const ResponsivePdfCanvasOverlay = ({ pageNumber, activeMode, pdfFile, pdfDimens
 
             try {
                 if (action.type === 'blur') {
-                    // Create blur effect
                     const tempCanvas = document.createElement('canvas');
                     tempCanvas.width = width;
                     tempCanvas.height = height;
                     const tempCtx = tempCanvas.getContext('2d');
 
-                    tempCtx.drawImage(pdfCanvas, action.x, action.y, width, height, 0, 0, width, height);
+                    // Extract area from original PDF canvas with proper scaling
+                    const scaleX = pdfCanvas.width / canvas.width;
+                    const scaleY = pdfCanvas.height / canvas.height;
+                    
+                    tempCtx.drawImage(
+                        pdfCanvas, 
+                        action.x * scaleX, action.y * scaleY, width * scaleX, height * scaleY,
+                        0, 0, width, height
+                    );
+                    
                     tempCtx.filter = 'blur(12px)';
                     tempCtx.drawImage(tempCanvas, 0, 0);
 
                     blurCtx.clearRect(action.x, action.y, width, height);
                     blurCtx.drawImage(tempCanvas, action.x, action.y);
 
-                    // Show border only in edit mode
                     if (activeMode === 'blur') {
                         blurCtx.strokeStyle = 'rgba(0, 100, 255, 0.6)';
                         blurCtx.lineWidth = 2;
@@ -245,11 +241,11 @@ const ResponsivePdfCanvasOverlay = ({ pageNumber, activeMode, pdfFile, pdfDimens
         }
     }, [overlaysPixels, isDrawing, activeMode, startPos, canvasReady]);
 
-    // Mouse position helper
+    // Mouse position helper - simplified
     const getMousePosition = useCallback((e) => {
         const canvas = canvasRef.current;
         if (!canvas) return { x: 0, y: 0 };
-
+        
         const rect = canvas.getBoundingClientRect();
         return {
             x: e.clientX - rect.left,
@@ -257,12 +253,9 @@ const ResponsivePdfCanvasOverlay = ({ pageNumber, activeMode, pdfFile, pdfDimens
         };
     }, []);
 
-    // Drawing event handlers - clean and simple
+    // Drawing event handlers
     const handleMouseDown = useCallback((e) => {
-        // Skip entirely if not in drawing mode
-        if (!activeMode || activeMode === 'view' || activeMode === 'addText') {
-            return;
-        }
+        if (!activeMode || activeMode === 'view' || activeMode === 'addText') return;
 
         setIsDrawing(true);
         const pos = getMousePosition(e);
@@ -270,17 +263,14 @@ const ResponsivePdfCanvasOverlay = ({ pageNumber, activeMode, pdfFile, pdfDimens
     }, [activeMode, getMousePosition]);
 
     const handleMouseMove = useCallback((e) => {
-        if (!isDrawing || !activeMode || activeMode === 'view') return;
-        if (activeMode === 'addText') return; // No drawing in text mode
+        if (!isDrawing || !activeMode || activeMode === 'view' || activeMode === 'addText') return;
 
         const currentPos = getMousePosition(e);
         setStartPos(prev => ({ ...prev, currentX: currentPos.x, currentY: currentPos.y }));
     }, [isDrawing, activeMode, getMousePosition]);
 
     const handleMouseUp = useCallback((e) => {
-        if (!isDrawing || !activeMode || activeMode === 'view') return;
-        if (activeMode === 'addText') return; // No drawing in text mode
-
+        if (!isDrawing || !activeMode || activeMode === 'view' || activeMode === 'addText') return;
         if (!pdfDimensions) return;
 
         setIsDrawing(false);
@@ -297,6 +287,8 @@ const ResponsivePdfCanvasOverlay = ({ pageNumber, activeMode, pdfFile, pdfDimens
                 height: Math.abs(height),
             };
 
+            console.log(`Creating ${activeMode} overlay:`, overlayData);
+
             dispatch(addOverlay({
                 pageNumber,
                 overlay: overlayData,
@@ -305,23 +297,7 @@ const ResponsivePdfCanvasOverlay = ({ pageNumber, activeMode, pdfFile, pdfDimens
         }
     }, [isDrawing, activeMode, startPos, getMousePosition, pageNumber, pdfDimensions, dispatch]);
 
-    // Simplified canvas click - no longer needed
-    const handleCanvasClick = useCallback(() => {
-        // Text boxes are created directly via button - no click detection needed
-    }, []);
-
-    // Text area change handler - handles placeholder text
-    const handleTextareaChange = (e) => {
-        const text = e.target.value;
-        setTextBox(prev => ({
-            ...prev,
-            text: text,
-            width: Math.max(250, text.length * 8 + 60),
-            height: Math.max(60, (text.split('\n').length * 25) + 40)
-        }));
-    };
-
-    // FIXED: Simplified Add Text Button Handler
+    // Add Text Button Handler
     const handleAddTextButton = () => {
         const container = containerRef.current;
         if (!container) return;
@@ -337,18 +313,15 @@ const ResponsivePdfCanvasOverlay = ({ pageNumber, activeMode, pdfFile, pdfDimens
             height: 40,
             text: '',
             fontSize: 16,
-            fontFamily: 'Roboto',
+            fontFamily: 'Helvetica',
             color: '#000000'
         });
         setShowTextBox(true);
         setEditingIndex(null);
 
-        // Focus the textarea
         setTimeout(() => {
             const textarea = document.querySelector('textarea');
-            if (textarea) {
-                textarea.focus();
-            }
+            if (textarea) textarea.focus();
         }, 100);
     };
 
@@ -364,7 +337,7 @@ const ResponsivePdfCanvasOverlay = ({ pageNumber, activeMode, pdfFile, pdfDimens
         dispatch(removeOverlay({ pageNumber, index: idx }));
     };
 
-    // FIXED: Simplified Text Box Save Handler
+    // Text Box Save Handler
     const handleTextBoxSave = useCallback(() => {
         if (!textBox.text.trim() || !pdfDimensions) {
             setShowTextBox(false);
@@ -374,14 +347,13 @@ const ResponsivePdfCanvasOverlay = ({ pageNumber, activeMode, pdfFile, pdfDimens
         const overlay = {
             ...textBox,
             type: 'addText',
-            // Store position and dimensions in PDF coordinates
             x: textBox.x,
             y: textBox.y,
             width: textBox.width,
             height: textBox.height,
             text: textBox.text,
             fontSize: textBox.fontSize,
-            fontFamily: textBox.fontFamily,
+            fontFamily: 'Helvetica', // Always use standard font
             color: textBox.color
         };
 
@@ -408,14 +380,14 @@ const ResponsivePdfCanvasOverlay = ({ pageNumber, activeMode, pdfFile, pdfDimens
             height: 40,
             text: '',
             fontSize: 16,
-            fontFamily: 'Roboto',
+            fontFamily: 'Helvetica',
             color: '#000000'
         });
         setEditingIndex(null);
     }, [textBox, pageNumber, pdfDimensions, dispatch, editingIndex]);
 
     const handleUpdateTextBox = useCallback((idx) => {
-        if (textBox.text.trim() && textBox.text !== 'Type your text here...' && pdfDimensions) {
+        if (textBox.text.trim() && pdfDimensions) {
             dispatch(updateOverlay({
                 pageNumber,
                 index: idx,
@@ -427,7 +399,7 @@ const ResponsivePdfCanvasOverlay = ({ pageNumber, activeMode, pdfFile, pdfDimens
         setEditingIndex(null);
     }, [textBox, pageNumber, pdfDimensions, dispatch]);
 
-    // Enhanced keyboard handler
+    // Keyboard handler
     const handleTextareaKeyDown = (e) => {
         if (e.key === 'Enter' && !e.shiftKey) {
             e.preventDefault();
@@ -494,7 +466,7 @@ const ResponsivePdfCanvasOverlay = ({ pageNumber, activeMode, pdfFile, pdfDimens
                                     border: 'none',
                                     resize: 'none',
                                     fontSize: `${action.fontSize}px`,
-                                    fontFamily: action.fontFamily,
+                                    fontFamily: 'Helvetica',
                                     color: action.color,
                                     background: 'transparent',
                                     outline: 'none'
@@ -523,7 +495,7 @@ const ResponsivePdfCanvasOverlay = ({ pageNumber, activeMode, pdfFile, pdfDimens
                             <span style={{
                                 width: '100%',
                                 fontSize: `${action.fontSize}px`,
-                                fontFamily: action.fontFamily,
+                                fontFamily: 'Helvetica',
                                 color: action.color,
                                 whiteSpace: 'pre-wrap',
                                 wordBreak: 'break-word',
@@ -588,7 +560,7 @@ const ResponsivePdfCanvasOverlay = ({ pageNumber, activeMode, pdfFile, pdfDimens
                 pointerEvents: activeMode === 'view' ? 'none' : 'auto'
             }}
         >
-            {/* Floating toolbar */}
+            {/* Simplified toolbar - only Add Text and Font Size */}
             {activeMode === 'addText' && (
                 <div style={{
                     position: 'absolute',
@@ -615,44 +587,38 @@ const ResponsivePdfCanvasOverlay = ({ pageNumber, activeMode, pdfFile, pdfDimens
                             fontWeight: '500'
                         }}
                     >
-                        Add Text
+                        + Add Text
                     </button>
                     <select
                         value={textBox.fontSize}
                         onChange={(e) => setTextBox({ ...textBox, fontSize: Number(e.target.value) })}
                         style={{
-                            padding: '4px',
+                            padding: '4px 8px',
                             borderRadius: '4px',
-                            border: '1px solid #ddd'
+                            border: '1px solid #ddd',
+                            fontSize: '14px'
                         }}
                     >
-                        {[12, 14, 16, 18, 20, 24, 28, 32].map(size => (
-                            <option key={size} value={size}>{size}px</option>
-                        ))}
-                    </select>
-                    <select
-                        value={textBox.fontFamily}
-                        onChange={(e) => setTextBox({ ...textBox, fontFamily: e.target.value })}
-                        style={{
-                            padding: '4px',
-                            borderRadius: '4px',
-                            border: '1px solid #ddd'
-                        }}
-                    >
-                        {FONT_FAMILIES.map(font => (
-                            <option key={font} value={font}>{font}</option>
-                        ))}
+                        <option value={12}>12px</option>
+                        <option value={14}>14px</option>
+                        <option value={16}>16px</option>
+                        <option value={18}>18px</option>
+                        <option value={20}>20px</option>
+                        <option value={24}>24px</option>
+                        <option value={28}>28px</option>
+                        <option value={32}>32px</option>
                     </select>
                     <input
                         type="color"
                         value={textBox.color}
                         onChange={(e) => setTextBox({ ...textBox, color: e.target.value })}
                         style={{
-                            width: '32px',
+                            width: '40px',
                             height: '32px',
                             padding: '0',
                             border: '1px solid #ddd',
-                            borderRadius: '4px'
+                            borderRadius: '4px',
+                            cursor: 'pointer'
                         }}
                     />
                 </div>
@@ -665,7 +631,6 @@ const ResponsivePdfCanvasOverlay = ({ pageNumber, activeMode, pdfFile, pdfDimens
                 onMouseDown={handleMouseDown}
                 onMouseMove={handleMouseMove}
                 onMouseUp={handleMouseUp}
-                onClick={handleCanvasClick}
                 style={{
                     cursor: getCursor(),
                     pointerEvents: 'auto'
@@ -705,16 +670,17 @@ const ResponsivePdfCanvasOverlay = ({ pageNumber, activeMode, pdfFile, pdfDimens
                     <div style={{ width: '100%', height: '100%', position: 'relative' }}>
                         <textarea
                             value={textBox.text}
+                            placeholder="Type your text here..."
                             onChange={(e) => setTextBox({ ...textBox, text: e.target.value })}
                             onKeyDown={handleTextareaKeyDown}
                             style={{
                                 width: '100%',
                                 height: '100%',
-                                padding: '4px',
+                                padding: '8px',
                                 border: 'none',
                                 resize: 'none',
                                 fontSize: `${textBox.fontSize}px`,
-                                fontFamily: textBox.fontFamily,
+                                fontFamily: 'Helvetica',
                                 color: textBox.color,
                                 outline: 'none',
                                 background: 'transparent'
@@ -731,7 +697,8 @@ const ResponsivePdfCanvasOverlay = ({ pageNumber, activeMode, pdfFile, pdfDimens
                                 borderRadius: '4px',
                                 cursor: 'pointer',
                                 fontSize: '12px',
-                                padding: '4px 8px'
+                                padding: '4px 8px',
+                                fontWeight: 'bold'
                             }}
                             onClick={handleTextBoxSave}
                         >

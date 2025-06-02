@@ -7,13 +7,18 @@ const initialState = {
     pdfDimensions: {}, // Store PDF dimensions for coordinate conversion
 };
 
-// Helper functions for coordinate conversion
+// Helper functions for coordinate conversion with precision
 const pixelsToPercentage = (pixelValue, dimension) => {
-    return dimension > 0 ? pixelValue / dimension : 0;
+    return dimension > 0 ? (pixelValue / dimension) : 0;
 };
 
 const percentageToPixels = (percentageValue, dimension) => {
     return percentageValue * dimension;
+};
+
+// Enhanced coordinate conversion for export (to original PDF coordinates)
+const percentageToOriginalPdfPixels = (percentageValue, originalDimension) => {
+    return percentageValue * originalDimension;
 };
 
 const overlaySlice = createSlice({
@@ -30,13 +35,20 @@ const overlaySlice = createSlice({
             if (!state.pdfDimensions[pageNumber]) {
                 state.pdfDimensions[pageNumber] = {};
             }
+
+            // Store both display and original dimensions
             state.pdfDimensions[pageNumber] = {
+                // Current display dimensions
                 width: dimensions.width,
                 height: dimensions.height,
+                // Original PDF dimensions
                 originalWidth: dimensions.originalWidth,
                 originalHeight: dimensions.originalHeight,
+                // Scale factor
                 scale: dimensions.scale
             };
+
+            console.log(`Stored PDF dimensions for page ${pageNumber}:`, state.pdfDimensions[pageNumber]);
         },
 
         addOverlay(state, action) {
@@ -47,7 +59,10 @@ const overlaySlice = createSlice({
             state.history.push(JSON.parse(JSON.stringify(state.overlays)));
             state.future = [];
 
-            // Convert pixel coordinates to percentages
+            console.log('Adding overlay with dimensions:', pdfDimensions);
+            console.log('Overlay pixel coords:', overlay);
+
+            // Convert pixel coordinates to percentages based on DISPLAY dimensions
             const percentageOverlay = {
                 ...overlay,
                 x: pixelsToPercentage(overlay.x, pdfDimensions.width),
@@ -56,10 +71,12 @@ const overlaySlice = createSlice({
                 height: pixelsToPercentage(overlay.height, pdfDimensions.height),
             };
 
+            console.log('Converted to percentage:', percentageOverlay);
+
             // Add default text properties if it's a text overlay
             if (overlay.type === 'addText') {
                 percentageOverlay.fontSize = overlay.fontSize || 16;
-                percentageOverlay.fontFamily = overlay.fontFamily || 'Arial';
+                percentageOverlay.fontFamily = overlay.fontFamily || 'Helvetica';
                 percentageOverlay.fontWeight = overlay.fontWeight || 'normal';
                 percentageOverlay.fontStyle = overlay.fontStyle || 'normal';
                 // Store font size as percentage of PDF height for responsiveness
@@ -91,7 +108,7 @@ const overlaySlice = createSlice({
                 // Handle text properties
                 if (overlay.type === 'addText') {
                     percentageOverlay.fontSize = overlay.fontSize || 16;
-                    percentageOverlay.fontFamily = overlay.fontFamily || 'Arial';
+                    percentageOverlay.fontFamily = overlay.fontFamily || 'Helvetica';
                     percentageOverlay.fontWeight = overlay.fontWeight || 'normal';
                     percentageOverlay.fontStyle = overlay.fontStyle || 'normal';
                     percentageOverlay.fontSizePercentage = pixelsToPercentage(
@@ -145,23 +162,31 @@ const overlaySlice = createSlice({
     },
 });
 
-// Selectors for getting overlays in pixel coordinates
+// Selectors for getting overlays in pixel coordinates (for display)
 export const getOverlaysInPixels = (state, pageNumber) => {
     const overlays = state.overlay.overlays[pageNumber] || [];
     const pdfDimensions = state.overlay.pdfDimensions[pageNumber];
 
     if (!pdfDimensions) return overlays;
 
-    return overlays.map(overlay => ({
-        ...overlay,
-        x: percentageToPixels(overlay.x, pdfDimensions.width),
-        y: percentageToPixels(overlay.y, pdfDimensions.height),
-        width: percentageToPixels(overlay.width, pdfDimensions.width),
-        height: percentageToPixels(overlay.height, pdfDimensions.height),
-        fontSize: overlay.fontSizePercentage
-            ? percentageToPixels(overlay.fontSizePercentage, pdfDimensions.height)
-            : overlay.fontSize || 16,
-    }));
+    const pixelOverlays = overlays.map(overlay => {
+        const pixelOverlay = {
+            ...overlay,
+            // Convert from percentage back to display pixels
+            x: percentageToPixels(overlay.x, pdfDimensions.width),
+            y: percentageToPixels(overlay.y, pdfDimensions.height),
+            width: percentageToPixels(overlay.width, pdfDimensions.width),
+            height: percentageToPixels(overlay.height, pdfDimensions.height),
+            fontSize: overlay.fontSizePercentage
+                ? percentageToPixels(overlay.fontSizePercentage, pdfDimensions.height)
+                : overlay.fontSize || 16,
+        };
+
+        console.log(`Display overlay (page ${pageNumber}):`, pixelOverlay);
+        return pixelOverlay;
+    });
+
+    return pixelOverlays;
 };
 
 // Selector for getting overlays for PDF export (in original PDF coordinates)
@@ -171,16 +196,24 @@ export const getOverlaysForExport = (state, pageNumber) => {
 
     if (!pdfDimensions) return overlays;
 
-    return overlays.map(overlay => ({
-        ...overlay,
-        x: percentageToPixels(overlay.x, pdfDimensions.originalWidth),
-        y: percentageToPixels(overlay.y, pdfDimensions.originalHeight),
-        width: percentageToPixels(overlay.width, pdfDimensions.originalWidth),
-        height: percentageToPixels(overlay.height, pdfDimensions.originalHeight),
-        fontSize: overlay.fontSizePercentage
-            ? percentageToPixels(overlay.fontSizePercentage, pdfDimensions.originalHeight)
-            : overlay.fontSize || 16,
-    }));
+    const exportOverlays = overlays.map(overlay => {
+        const exportOverlay = {
+            ...overlay,
+            // Convert from percentage to ORIGINAL PDF coordinates
+            x: percentageToOriginalPdfPixels(overlay.x, pdfDimensions.originalWidth),
+            y: percentageToOriginalPdfPixels(overlay.y, pdfDimensions.originalHeight),
+            width: percentageToOriginalPdfPixels(overlay.width, pdfDimensions.originalWidth),
+            height: percentageToOriginalPdfPixels(overlay.height, pdfDimensions.originalHeight),
+            fontSize: overlay.fontSizePercentage
+                ? percentageToOriginalPdfPixels(overlay.fontSizePercentage, pdfDimensions.originalHeight)
+                : overlay.fontSize || 16,
+        };
+
+        console.log(`Export overlay (page ${pageNumber}):`, exportOverlay);
+        return exportOverlay;
+    });
+
+    return exportOverlays;
 };
 
 // Selector for getting all overlays for export across all pages
@@ -190,24 +223,32 @@ export const selectAllOverlaysForExport = (state) => {
         const pageOverlays = state.overlay.overlays[pageNumber] || [];
         const pdfDimensions = state.overlay.pdfDimensions[pageNumber];
 
-        if (pdfDimensions) {
-            allOverlays[pageNumber] = pageOverlays.map(overlay => ({
-                ...overlay,
-                x: percentageToPixels(overlay.x, pdfDimensions.originalWidth),
-                y: percentageToPixels(overlay.y, pdfDimensions.originalHeight),
-                width: percentageToPixels(overlay.width, pdfDimensions.originalWidth),
-                height: percentageToPixels(overlay.height, pdfDimensions.originalHeight),
-                fontSize: overlay.fontSizePercentage
-                    ? percentageToPixels(overlay.fontSizePercentage, pdfDimensions.originalHeight)
-                    : overlay.fontSize || 16,
-                text: overlay.text || '', // Ensure text is included
-                type: overlay.type, // Ensure type is included
-                fontFamily: overlay.fontFamily || 'Roboto',
-                fontWeight: overlay.fontWeight || 'Regular',
-                fontStyle: overlay.fontStyle || 'normal'
-            }));
+        if (pdfDimensions && pageOverlays.length > 0) {
+            allOverlays[pageNumber] = pageOverlays.map(overlay => {
+                const exportOverlay = {
+                    ...overlay,
+                    // Convert from percentage to ORIGINAL PDF coordinates
+                    x: percentageToOriginalPdfPixels(overlay.x, pdfDimensions.originalWidth),
+                    y: percentageToOriginalPdfPixels(overlay.y, pdfDimensions.originalHeight),
+                    width: percentageToOriginalPdfPixels(overlay.width, pdfDimensions.originalWidth),
+                    height: percentageToOriginalPdfPixels(overlay.height, pdfDimensions.originalHeight),
+                    fontSize: overlay.fontSizePercentage
+                        ? percentageToOriginalPdfPixels(overlay.fontSizePercentage, pdfDimensions.originalHeight)
+                        : overlay.fontSize || 16,
+                    text: overlay.text || '', // Ensure text is included
+                    type: overlay.type, // Ensure type is included
+                    fontFamily: overlay.fontFamily || 'Helvetica',
+                    fontWeight: overlay.fontWeight || 'Regular',
+                    fontStyle: overlay.fontStyle || 'normal'
+                };
+
+                console.log(`Export overlay for page ${pageNumber}:`, exportOverlay);
+                return exportOverlay;
+            });
         }
     });
+
+    console.log('All export overlays:', allOverlays);
     return allOverlays;
 };
 
