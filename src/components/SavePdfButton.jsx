@@ -169,21 +169,28 @@ const ResponsiveSavePdfButton = ({ pdfFile, editActions, pdfDimensions }) => {
                         // Convert color
                         const color = hexToRgb(text.color || '#000000');
 
-                        // Calculate font size - ensure it's reasonable
-                        const fontSize = Math.max(8, Math.min(72, text.fontSize || 16));
+                        // Calculate scale factor between displayed and original PDF
+                        // pdfHeight = original PDF height, pdfDimensions.height = displayed height
+                        const displayedPdfHeight = pdfDimensions && pdfDimensions[pageNumber] && pdfDimensions[pageNumber].height
+                            ? pdfDimensions[pageNumber].height
+                            : pdfHeight;
+                        const scale = pdfHeight / displayedPdfHeight;
+
+                        // Calculate font size - scale to match display
+                        const fontSize = Math.max(8, Math.min(72, (text.fontSize || 16) * scale));
 
                         // Handle multi-line text properly
                         const textContent = text.text || '';
                         const lines = textContent.split('\n');
 
-                        // Calculate proper line height (1.4 is a good default line height ratio)
-                        const lineHeight = fontSize * 1.3;
+                        // Calculate proper line height (reduce for tighter spacing)
+                        const lineHeight = fontSize * 1.1;
 
                         // Draw each line with proper spacing
                         lines.forEach((line, lineIndex) => {
                             if (line.trim() !== '') { // Only draw non-empty lines
                                 // Keep first line at original position, move subsequent lines down
-                                const yPosition = pdfHeight - text.y - (fontSize * 0.8) - (lineIndex * lineHeight);
+                                const yPosition = pdfHeight - text.y - (fontSize * 0.8) - (lineIndex * lineHeight) + 4;
 
                                 page.drawText(line, {
                                     x: text.x,
@@ -196,7 +203,7 @@ const ResponsiveSavePdfButton = ({ pdfFile, editActions, pdfDimensions }) => {
                             }
                         });
 
-                        console.log(`Applied text "${text.text}" at: ${text.x}, ${text.y} with ${lines.length} lines`);
+                        console.log(`Applied text "${text.text}" at: ${text.x}, ${text.y} with ${lines.length} lines (fontSize: ${fontSize}, scale: ${scale})`);
                     } catch (textError) {
                         console.error('Error processing text:', textError);
                     }
