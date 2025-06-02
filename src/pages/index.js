@@ -1,7 +1,10 @@
-import React, { useState } from 'react';
-import { Container, Box, Typography, useTheme, useMediaQuery } from '@mui/material';
-import { useSelector } from 'react-redux';
-import { selectAllOverlaysForExport } from '../store/overlaySlice';
+import React, { useState, useEffect } from 'react';
+import { Container, Box, Typography, useTheme, useMediaQuery, IconButton, Tooltip, Button } from '@mui/material';
+import { useSelector, useDispatch } from 'react-redux';
+import { selectAllOverlaysForExport, undo, redo, clearOverlays } from '../store/overlaySlice';
+import UndoIcon from '@mui/icons-material/Undo';
+import RedoIcon from '@mui/icons-material/Redo';
+import ClearAllIcon from '@mui/icons-material/ClearAll';
 
 // Import your existing components
 import PdfUploader from '../components/PdfUploader';
@@ -14,6 +17,7 @@ export default function Home() {
     const theme = useTheme();
     const isMobile = useMediaQuery(theme.breakpoints.down('md'));
     const isTablet = useMediaQuery(theme.breakpoints.down('lg'));
+    const dispatch = useDispatch();
 
     const [pdfFile, setPdfFile] = useState(null);
     const [numPages, setNumPages] = useState(null);
@@ -23,6 +27,28 @@ export default function Home() {
 
     // Get export overlays for save button
     const exportOverlays = useSelector(selectAllOverlaysForExport);
+    
+    // Get undo/redo state
+    const canUndo = useSelector(state => state.overlay.history.length > 0);
+    const canRedo = useSelector(state => state.overlay.future.length > 0);
+
+    // Keyboard shortcuts for undo/redo
+    useEffect(() => {
+        const handleKeyDown = (e) => {
+            if (e.ctrlKey || e.metaKey) {
+                if (e.key === 'z' && !e.shiftKey) {
+                    e.preventDefault();
+                    if (canUndo) dispatch(undo());
+                } else if ((e.key === 'y') || (e.key === 'z' && e.shiftKey)) {
+                    e.preventDefault();
+                    if (canRedo) dispatch(redo());
+                }
+            }
+        };
+
+        window.addEventListener('keydown', handleKeyDown);
+        return () => window.removeEventListener('keydown', handleKeyDown);
+    }, [dispatch, canUndo, canRedo]);
 
     const onDocumentLoadSuccess = (pdf) => {
         setNumPages(pdf.numPages);
@@ -40,7 +66,7 @@ export default function Home() {
     };
 
     // Get total edits count for display
-    const totalEdits = Object.values(exportOverlays).reduce((total, pageActions) =>
+    const totalEdits = Object.values(exportOverlays).reduce((total, pageActions) => 
         total + (pageActions ? pageActions.length : 0), 0
     );
 
@@ -105,10 +131,10 @@ export default function Home() {
                             lineHeight: 1.6
                         }}
                     >
-                        Professional PDF editing with blur effects, content removal, and text overlay.
+                        Professional PDF editing with blur effects, content removal, and text overlay. 
                         Pixel-perfect results across all devices.
                     </Typography>
-
+                    
                     {/* Stats display when editing */}
                     {pdfFile && totalEdits > 0 && (
                         <Box
@@ -173,28 +199,109 @@ export default function Home() {
                                     activeMode={activeMode}
                                 />
                             </Box>
-
-                            <Box
-                                sx={{
+                            
+                            <Box 
+                                sx={{ 
                                     display: 'flex',
                                     flexDirection: { xs: 'column', sm: 'row' },
                                     gap: 2,
                                     alignItems: 'center',
-                                    minWidth: { md: '200px' }
+                                    minWidth: { md: '300px' }
                                 }}
                             >
+                                {/* Undo/Redo Controls */}
+                                <Box 
+                                    sx={{ 
+                                        display: 'flex',
+                                        gap: 1,
+                                        background: 'rgba(0,0,0,0.05)',
+                                        borderRadius: 1,
+                                        p: 0.5
+                                    }}
+                                >
+                                    <Tooltip title="Undo (Ctrl+Z)" arrow>
+                                        <span>
+                                            <IconButton
+                                                onClick={() => dispatch(undo())}
+                                                disabled={!canUndo}
+                                                size="small"
+                                                sx={{
+                                                    background: canUndo ? 'white' : 'transparent',
+                                                    '&:hover': {
+                                                        background: canUndo ? '#f5f5f5' : 'transparent'
+                                                    },
+                                                    '&:disabled': {
+                                                        opacity: 0.4
+                                                    }
+                                                }}
+                                            >
+                                                <UndoIcon />
+                                            </IconButton>
+                                        </span>
+                                    </Tooltip>
+                                    
+                                    <Tooltip title="Redo (Ctrl+Y)" arrow>
+                                        <span>
+                                            <IconButton
+                                                onClick={() => dispatch(redo())}
+                                                disabled={!canRedo}
+                                                size="small"
+                                                sx={{
+                                                    background: canRedo ? 'white' : 'transparent',
+                                                    '&:hover': {
+                                                        background: canRedo ? '#f5f5f5' : 'transparent'
+                                                    },
+                                                    '&:disabled': {
+                                                        opacity: 0.4
+                                                    }
+                                                }}
+                                            >
+                                                <RedoIcon />
+                                            </IconButton>
+                                        </span>
+                                    </Tooltip>
+                                    
+                                    <Box sx={{ width: 1, height: 24, background: 'rgba(0,0,0,0.2)', mx: 0.5 }} />
+                                    
+                                    <Tooltip title="Clear All Edits" arrow>
+                                        <span>
+                                            <IconButton
+                                                onClick={() => {
+                                                    if (window.confirm('Clear all edits? This cannot be undone.')) {
+                                                        dispatch(clearOverlays());
+                                                    }
+                                                }}
+                                                disabled={totalEdits === 0}
+                                                size="small"
+                                                sx={{
+                                                    background: totalEdits > 0 ? 'white' : 'transparent',
+                                                    color: totalEdits > 0 ? '#f44336' : 'inherit',
+                                                    '&:hover': {
+                                                        background: totalEdits > 0 ? '#ffebee' : 'transparent'
+                                                    },
+                                                    '&:disabled': {
+                                                        opacity: 0.4
+                                                    }
+                                                }}
+                                            >
+                                                <ClearAllIcon />
+                                            </IconButton>
+                                        </span>
+                                    </Tooltip>
+                                </Box>
+                                
                                 <SavePdfButton
                                     pdfFile={pdfFile}
                                     editActions={exportOverlays}
                                     pdfDimensions={pdfDimensions}
                                 />
-
+                                
                                 {/* Quick stats */}
                                 {totalEdits > 0 && (
-                                    <Typography
-                                        variant="caption"
+                                    <Typography 
+                                        variant="caption" 
                                         color="textSecondary"
-                                        sx={{
+                                        sx={{ 
                                             textAlign: 'center',
                                             background: 'rgba(33, 150, 243, 0.1)',
                                             px: 2,
@@ -252,7 +359,8 @@ export default function Home() {
                                     color: 'text.secondary',
                                     display: 'flex',
                                     alignItems: 'center',
-                                    gap: 1
+                                    gap: 1,
+                                    flex: 1
                                 }}
                             >
                                 {activeMode === 'view' && (
@@ -280,21 +388,68 @@ export default function Home() {
                                     </>
                                 )}
                             </Typography>
-
-                            {/* Page navigation in status bar */}
-                            <Typography
-                                variant="body2"
-                                sx={{
-                                    fontWeight: 'medium',
-                                    color: 'text.primary',
+                            
+                            {/* Mobile Undo/Redo + Page Navigation */}
+                            <Box 
+                                sx={{ 
+                                    display: 'flex', 
+                                    alignItems: 'center', 
+                                    gap: 1,
                                     background: 'rgba(255,255,255,0.8)',
-                                    px: 2,
-                                    py: 0.5,
-                                    borderRadius: 1
+                                    borderRadius: 1,
+                                    px: 1,
+                                    py: 0.5
                                 }}
                             >
-                                Page {pageNumber} of {numPages}
-                            </Typography>
+                                {/* Undo/Redo for mobile */}
+                                {isMobile && (
+                                    <>
+                                        <Tooltip title="Undo" arrow>
+                                            <span>
+                                                <IconButton
+                                                    onClick={() => dispatch(undo())}
+                                                    disabled={!canUndo}
+                                                    size="small"
+                                                    sx={{ 
+                                                        minWidth: 'auto',
+                                                        '&:disabled': { opacity: 0.4 }
+                                                    }}
+                                                >
+                                                    <UndoIcon fontSize="small" />
+                                                </IconButton>
+                                            </span>
+                                        </Tooltip>
+                                        
+                                        <Tooltip title="Redo" arrow>
+                                            <span>
+                                                <IconButton
+                                                    onClick={() => dispatch(redo())}
+                                                    disabled={!canRedo}
+                                                    size="small"
+                                                    sx={{ 
+                                                        minWidth: 'auto',
+                                                        '&:disabled': { opacity: 0.4 }
+                                                    }}
+                                                >
+                                                    <RedoIcon fontSize="small" />
+                                                </IconButton>
+                                            </span>
+                                        </Tooltip>
+                                        
+                                        <Box sx={{ width: 1, height: 20, background: 'rgba(0,0,0,0.2)', mx: 1 }} />
+                                    </>
+                                )}
+                                
+                                <Typography
+                                    variant="body2"
+                                    sx={{
+                                        fontWeight: 'medium',
+                                        color: 'text.primary'
+                                    }}
+                                >
+                                    Page {pageNumber} of {numPages}
+                                </Typography>
+                            </Box>
                         </Box>
 
                         {/* PDF Viewer with Overlay */}
@@ -375,6 +530,24 @@ export default function Home() {
                                 </Typography>
                             </Box>
                         )}
+
+                        {/* Desktop keyboard shortcuts help */}
+                        {!isMobile && totalEdits > 0 && (
+                            <Box
+                                mt={2}
+                                p={2}
+                                sx={{
+                                    background: 'rgba(76, 175, 80, 0.05)',
+                                    borderRadius: 1,
+                                    textAlign: 'center',
+                                    border: '1px solid rgba(76, 175, 80, 0.1)'
+                                }}
+                            >
+                                <Typography variant="caption" color="textSecondary">
+                                    ⌨️ Keyboard Shortcuts: <strong>Ctrl+Z</strong> Undo • <strong>Ctrl+Y</strong> Redo
+                                </Typography>
+                            </Box>
+                        )}
                     </Box>
                 )}
 
@@ -416,23 +589,24 @@ export default function Home() {
                                 zIndex: 0
                             }}
                         />
-
+                        
                         <Box sx={{ position: 'relative', zIndex: 1 }}>
                             <Typography variant="h5" gutterBottom sx={{ fontWeight: 'bold', mb: 3 }}>
                                 🚀 Ready to Start Editing?
                             </Typography>
                             <Typography variant="body1" color="textSecondary" sx={{ mb: 4, maxWidth: 600, mx: 'auto' }}>
                                 Upload a PDF file to begin editing. Our editor automatically adapts to your screen size
-                                and maintains overlay positions perfectly across all devices.
+                                and maintains overlay positions perfectly across all devices. Features full undo/redo support
+                                with keyboard shortcuts.
                             </Typography>
-
+                            
                             <Box
                                 display="grid"
                                 gridTemplateColumns={{ xs: '1fr', sm: 'repeat(3, 1fr)' }}
                                 gap={3}
                                 mt={3}
                             >
-                                <Box
+                                <Box 
                                     sx={{
                                         p: 3,
                                         background: 'rgba(255,255,255,0.8)',
@@ -447,8 +621,8 @@ export default function Home() {
                                         Hide sensitive information with smooth blur effects
                                     </Typography>
                                 </Box>
-
-                                <Box
+                                
+                                <Box 
                                     sx={{
                                         p: 3,
                                         background: 'rgba(255,255,255,0.8)',
@@ -463,8 +637,8 @@ export default function Home() {
                                         Remove unwanted content with precise selection
                                     </Typography>
                                 </Box>
-
-                                <Box
+                                
+                                <Box 
                                     sx={{
                                         p: 3,
                                         background: 'rgba(255,255,255,0.8)',
@@ -477,6 +651,39 @@ export default function Home() {
                                     </Typography>
                                     <Typography variant="body2" color="textSecondary">
                                         Insert custom text with professional fonts
+                                    </Typography>
+                                </Box>
+                            </Box>
+
+                            {/* Additional features */}
+                            <Box 
+                                mt={4}
+                                p={3}
+                                sx={{
+                                    background: 'rgba(255,255,255,0.9)',
+                                    borderRadius: 2,
+                                    border: '1px solid rgba(0,0,0,0.1)'
+                                }}
+                            >
+                                <Typography variant="h6" sx={{ fontWeight: 'bold', mb: 2, textAlign: 'center' }}>
+                                    ⚡ Pro Features
+                                </Typography>
+                                <Box 
+                                    display="grid"
+                                    gridTemplateColumns={{ xs: '1fr', sm: 'repeat(2, 1fr)' }}
+                                    gap={2}
+                                >
+                                    <Typography variant="body2" color="textSecondary" sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                                        <span>↩️</span> <strong>Undo/Redo:</strong> Full history with Ctrl+Z/Ctrl+Y
+                                    </Typography>
+                                    <Typography variant="body2" color="textSecondary" sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                                        <span>📱</span> <strong>Responsive:</strong> Works perfectly on all devices
+                                    </Typography>
+                                    <Typography variant="body2" color="textSecondary" sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                                        <span>🎯</span> <strong>Pixel Perfect:</strong> Exact alignment in saved PDFs
+                                    </Typography>
+                                    <Typography variant="body2" color="textSecondary" sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                                        <span>🔄</span> <strong>Real-time:</strong> See changes instantly as you edit
                                     </Typography>
                                 </Box>
                             </Box>
