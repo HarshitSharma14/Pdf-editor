@@ -160,7 +160,7 @@ const ResponsiveSavePdfButton = ({ pdfFile, editActions, pdfDimensions }) => {
                     }
                 }
 
-                // Process text actions
+                // Process text actions with proper line spacing
                 for (const text of textActions) {
                     try {
                         // Get font (using standard fonts for reliability)
@@ -172,17 +172,31 @@ const ResponsiveSavePdfButton = ({ pdfFile, editActions, pdfDimensions }) => {
                         // Calculate font size - ensure it's reasonable
                         const fontSize = Math.max(8, Math.min(72, text.fontSize || 16));
 
-                        // Draw text
-                        page.drawText(text.text || '', {
-                            x: text.x,
-                            y: pdfHeight - text.y - (fontSize * 0.8), // Adjust baseline
-                            size: fontSize,
-                            font: font,
-                            color: rgb(color.r, color.g, color.b),
-                            opacity: 1
+                        // Handle multi-line text properly
+                        const textContent = text.text || '';
+                        const lines = textContent.split('\n');
+
+                        // Calculate proper line height (1.4 is a good default line height ratio)
+                        const lineHeight = fontSize * 1.3;
+
+                        // Draw each line with proper spacing
+                        lines.forEach((line, lineIndex) => {
+                            if (line.trim() !== '') { // Only draw non-empty lines
+                                // Keep first line at original position, move subsequent lines down
+                                const yPosition = pdfHeight - text.y - (fontSize * 0.8) - (lineIndex * lineHeight);
+
+                                page.drawText(line, {
+                                    x: text.x,
+                                    y: yPosition,
+                                    size: fontSize,
+                                    font: font,
+                                    color: rgb(color.r, color.g, color.b),
+                                    opacity: 1
+                                });
+                            }
                         });
 
-                        console.log(`Applied text "${text.text}" at: ${text.x}, ${text.y}`);
+                        console.log(`Applied text "${text.text}" at: ${text.x}, ${text.y} with ${lines.length} lines`);
                     } catch (textError) {
                         console.error('Error processing text:', textError);
                     }
