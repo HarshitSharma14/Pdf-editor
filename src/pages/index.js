@@ -161,11 +161,13 @@ export default function Home() {
                 maxWidth={false}
                 sx={{
                     maxWidth: { xs: '100%', sm: '100%', md: '1400px' },
+                    width: '100%',
+                    mx: 'auto',
                     px: { xs: 1, sm: 2, md: 3 },
                     py: { xs: 2, sm: 3, md: 4 },
                     minHeight: '100vh',
-                    background: 'linear-gradient(135deg, #667eea 0%, #764ba2 50%, #f093fb 100%)',
                     position: 'relative',
+                    background: 'linear-gradient(135deg, #667eea 0%, #764ba2 50%, #f093fb 100%)',
                     '&::before': {
                         content: '""',
                         position: 'absolute',
